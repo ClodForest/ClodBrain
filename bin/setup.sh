@@ -3,7 +3,15 @@
 # Dual-LLM Chat System Setup Script
 echo "🧠 Setting up Dual-LLM Split Brain Chat System..."
 
-cd "$(realpath "$(dirname "$0")")"
+bin="$(dirname "$0")"
+echo $bin
+cd "$(realpath "$bin"/..)"
+pwd
+
+if ! [ -x bin/$(basename $0) ]; then
+    echo "Something amiss in the directory situation..."
+    exit 1
+fi
 
 # Create project directory structure
 echo "📁 Creating project structure..."
@@ -320,7 +328,7 @@ cat > test/basic.test.coffee << 'EOF'
 describe 'Dual-LLM Chat System', ->
   it 'should have proper test setup', ->
     expect(true).to.be.true
-    
+
   it 'should load configuration', ->
     config = require '../src/config/models'
     expect(config).to.exist
@@ -336,7 +344,7 @@ npm install
 echo "🔍 Checking Ollama status..."
 if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     echo "✅ Ollama is running"
-    
+
     # Check for required models
     echo "🔍 Checking for required models..."
     if curl -s http://localhost:11434/api/tags | grep -q "llama3.1:8b-instruct-q4_K_M"; then
@@ -344,7 +352,7 @@ if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     else
         echo "⚠️  Alpha model not found. Please run: ollama pull llama3.1:8b-instruct-q4_K_M"
     fi
-    
+
     if curl -s http://localhost:11434/api/tags | grep -q "qwen2.5-coder:7b-instruct-q4_K_M"; then
         echo "✅ Beta model (qwen2.5-coder:7b-instruct-q4_K_M) found"
     else
