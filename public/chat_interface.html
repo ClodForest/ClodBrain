@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual-LLM Split Brain Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d3a 100%);
+            color: #e1e1e6;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: grid;
+            grid-template-rows: 60px 1fr 80px;
+            grid-template-columns: 1fr 1fr;
+            grid-template-areas: 
+                "header header"
+                "alpha beta"
+                "controls controls";
+            height: 100vh;
+            gap: 1px;
+            background: #333;
+        }
+
+        .header {
+            grid-area: header;
+            background: linear-gradient(90deg, #4a4a6a 0%, #5a5a7a 50%, #6a6a8a 100%);
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #444;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .brain-status {
+            display: flex;
+            gap: 20px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-alpha {
+            background: rgba(74, 144, 226, 0.2);
+            border: 1px solid #4a90e2;
+        }
+
+        .status-beta {
+            background: rgba(226, 74, 144, 0.2);
+            border: 1px solid #e24a90;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4caf50;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .brain-panel {
+            background: #2a2a3a;
+            padding: 20px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .alpha-panel {
+            grid-area: alpha;
+            border-right: 1px solid #444;
+        }
+
+        .beta-panel {
+            grid-area: beta;
+        }
+
+        .brain-header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid;
+        }
+
+        .alpha-panel .brain-header {
+            border-color: #4a90e2;
+            color: #4a90e2;
+        }
+
+        .beta-panel .brain-header {
+            border-color: #e24a90;
+            color: #e24a90;
+        }
+
+        .brain-header h2 {
+            font-size: 20px;
+            margin-bottom: 5px;
+        }
+
+        .brain-subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        .messages-container {
+            min-height: 400px;
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-left: 4px solid;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-alpha {
+            border-color: #4a90e2;
+        }
+
+        .message-beta {
+            border-color: #e24a90;
+        }
+
+        .message-synthesis {
+            border-color: #9c27b0;
+            background: rgba(156, 39, 176, 0.1);
+        }
+
+        .message-communication {
+            border-color: #ff9800;
+            background: rgba(255, 152, 0, 0.1);
+            font-style: italic;
+            font-size: 14px;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .message-content {
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .controls {
+            grid-area: controls;
+            background: #2a2a3a;
+            padding: 20px;
+            border-top: 1px solid #444;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .input-container {
+            flex: 1;
+            position: relative;
+        }
+
+        .message-input {
+            width: 100%;
+            padding: 12px 50px 12px 15px;
+            border: 2px solid #444;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #e1e1e6;
+            font-size: 16px;
+            resize: none;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .message-input:focus {
+            border-color: #4a90e2;
+            background: rgba(74, 144, 226, 0.1);
+        }
+
+        .send-button {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #4a90e2;
+            border: none;
+            border-radius: 50%;
+            width: 35px;
+            height: 35px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .send-button:hover {
+            background: #357abd;
+            transform: translateY(-50%) scale(1.1);
+        }
+
+        .send-button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: translateY(-50%);
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .mode-button {
+            padding: 8px 15px;
+            border: 1px solid #666;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #e1e1e6;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .mode-button:hover {
+            border-color: #4a90e2;
+            background: rgba(74, 144, 226, 0.2);
+        }
+
+        .mode-button.active {
+            background: #4a90e2;
+            border-color: #4a90e2;
+            color: white;
+        }
+
+        .corpus-communication {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 152, 0, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 14px;
+            z-index: 1000;
+            animation: commFlash 2s ease-out;
+            pointer-events: none;
+        }
+
+        @keyframes commFlash {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+            20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+        }
+
+        .thinking-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            margin-bottom: 15px;
+            animation: thinking 1.5s ease-in-out infinite;
+        }
+
+        @keyframes thinking {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        .thinking-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .thinking-dot {
+            width: 6px;
+            height: 6px;
+            background: currentColor;
+            border-radius: 50%;
+            animation: thinkingDot 1.4s ease-in-out infinite;
+        }
+
+        .thinking-dot:nth-child(1) { animation-delay: 0s; }
+        .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes thinkingDot {
+            0%, 20%, 100% { transform: scale(1); }
+            50% { transform: scale(1.5); }
+        }
+
+        .error-message {
+            background: rgba(244, 67, 54, 0.2);
+            border-color: #f44336;
+            color: #ffcdd2;
+        }
+
+        .scrollbar-custom {
+            scrollbar-width: thin;
+            scrollbar-color: #666 #2a2a3a;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-track {
+            background: #2a2a3a;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-thumb {
+            background: #666;
+            border-radius: 4px;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-thumb:hover {
+            background: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 Dual-LLM Split Brain Chat</h1>
+            <div class="brain-status">
+                <div class="status-indicator status-alpha">
+                    <div class="status-dot"></div>
+                    <span>Alpha Online</span>
+                </div>
+                <div class="status-indicator status-beta">
+                    <div class="status-dot"></div>
+                    <span>Beta Online</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="brain-panel alpha-panel">
+            <div class="brain-header">
+                <h2>🔍 Alpha Brain</h2>
+                <div class="brain-subtitle">Analytical • Logical • Sequential</div>
+            </div>
+            <div class="messages-container scrollbar-custom" id="alpha-messages">
+                <div class="message message-alpha">
+                    <div class="message-header">
+                        <span>System</span>
+                        <span id="alpha-timestamp"></span>
+                    </div>
+                    <div class="message-content">Hello! I'm Alpha, your analytical assistant. I focus on logical reasoning, step-by-step analysis, and factual accuracy. I work alongside Beta to provide comprehensive responses.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="brain-panel beta-panel">
+            <div class="brain-header">
+                <h2>💡 Beta Brain</h2>
+                <div class="brain-subtitle">Creative • Intuitive • Innovative</div>
+            </div>
+            <div class="messages-container scrollbar-custom" id="beta-messages">
+                <div class="message message-beta">
+                    <div class="message-header">
+                        <span>System</span>
+                        <span id="beta-timestamp"></span>
+                    </div>
+                    <div class="message-content">Hey there! I'm Beta, your creative partner. I excel at pattern recognition, innovative solutions, and thinking outside the box. Together with Alpha, we'll explore every angle of your questions!</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="mode-selector">
+                <span style="color: #999; font-size: 14px;">Mode:</span>
+                <button class="mode-button active" data-mode="parallel">Parallel</button>
+                <button class="mode-button" data-mode="sequential">Sequential</button>
+                <button class="mode-button" data-mode="debate">Debate</button>
+                <button class="mode-button" data-mode="synthesis">Synthesis</button>
+                <button class="mode-button" data-mode="handoff">Handoff</button>
+            </div>
+            <div class="input-container">
+                <textarea class="message-input" id="messageInput" placeholder="Ask both brains a question..." rows="1"></textarea>
+                <button class="send-button" id="sendButton">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        class DualBrainChat {
+            constructor() {
+                this.socket = io();
+                this.currentMode = 'parallel';
+                this.isProcessing = false;
+                this.conversationId = this.generateConversationId();
+                
+                this.initializeElements();
+                this.bindEvents();
+                this.connectSocket();
+                this.updateTimestamps();
+            }
+
+            initializeElements() {
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.alphaMessages = document.getElementById('alpha-messages');
+                this.betaMessages = document.getElementById('beta-messages');
+                this.modeButtons = document.querySelectorAll('.mode-button');
+            }
+
+            bindEvents() {
+                // Send message on button click
+                this.sendButton.addEventListener('click', () => this.sendMessage());
+                
+                // Send message on Enter (but allow Shift+Enter for new lines)
+                this.messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                // Auto-resize textarea
+                this.messageInput.addEventListener('input', () => {
+                    this.messageInput.style.height = 'auto';
+                    this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 120) + 'px';
+                });
+
+                // Mode selection
+                this.modeButtons.forEach(button => {
+                    button.addEventListener('click', () => {
+                        this.setMode(button.dataset.mode);
+                    });
+                });
+            }
+
+            connectSocket() {
+                this.socket.on('connect', () => {
+                    console.log('Connected to server');
+                });
+
+                this.socket.on('alpha_response', (data) => {
+                    this.addMessage('alpha', data.content, data.timestamp);
+                    this.setProcessing(false);
+                });
+
+                this.socket.on('beta_response', (data) => {
+                    this.addMessage('beta', data.content, data.timestamp);
+                    this.setProcessing(false);
+                });
+
+                this.socket.on('synthesis_complete', (data) => {
+                    this.addSynthesis(data.content, data.timestamp);
+                    this.setProcessing(false);
+                });
+
+                this.socket.on('corpus_communication', (data) => {
+                    this.showCorpusCommunication(data);
+                });
+
+                this.socket.on('error', (data) => {
+                    this.addError(data.message);
+                    this.setProcessing(false);
+                });
+
+                this.socket.on('disconnect', () => {
+                    console.log('Disconnected from server');
+                });
+            }
+
+            sendMessage() {
+                const message = this.messageInput.value.trim();
+                if (!message || this.isProcessing) return;
+
+                // Add user message to both panels
+                this.addUserMessage(message);
+                
+                // Clear input
+                this.messageInput.value = '';
+                this.messageInput.style.height = 'auto';
+
+                // Show thinking indicators
+                this.setProcessing(true);
+
+                // Send to server
+                this.socket.emit('message_send', {
+                    message: message,
+                    mode: this.currentMode,
+                    conversationId: this.conversationId
+                });
+            }
+
+            addUserMessage(message) {
+                const timestamp = new Date().toISOString();
+                this.addMessage('alpha', `User: ${message}`, timestamp, 'user');
+                this.addMessage('beta', `User: ${message}`, timestamp, 'user');
+            }
+
+            addMessage(brain, content, timestamp, type = 'response') {
+                const container = brain === 'alpha' ? this.alphaMessages : this.betaMessages;
+                const messageClass = type === 'user' ? 'message-user' : `message-${brain}`;
+                
+                this.removeThinkingIndicator(brain);
+                
+                const messageElement = document.createElement('div');
+                messageElement.className = `message ${messageClass}`;
+                messageElement.innerHTML = `
+                    <div class="message-header">
+                        <span>${type === 'user' ? 'You' : brain.charAt(0).toUpperCase() + brain.slice(1)}</span>
+                        <span>${this.formatTimestamp(timestamp)}</span>
+                    </div>
+                    <div class="message-content">${this.formatContent(content)}</div>
+                `;
+                
+                container.appendChild(messageElement);
+                this.scrollToBottom(container);
+            }
+
+            addSynthesis(content, timestamp) {
+                // Add synthesis to both panels
+                const messageElement = `
+                    <div class="message message-synthesis">
+                        <div class="message-header">
+                            <span>🔗 Synthesis</span>
+                            <span>${this.formatTimestamp(timestamp)}</span>
+                        </div>
+                        <div class="message-content">${this.formatContent(content)}</div>
+                    </div>
+                `;
+                
+                this.alphaMessages.insertAdjacentHTML('beforeend', messageElement);
+                this.betaMessages.insertAdjacentHTML('beforeend', messageElement);
+                
+                this.scrollToBottom(this.alphaMessages);
+                this.scrollToBottom(this.betaMessages);
+            }
+
+            addError(message) {
+                const errorElement = `
+                    <div class="message error-message">
+                        <div class="message-header">
+                            <span>⚠️ Error</span>
+                            <span>${this.formatTimestamp(new Date().toISOString())}</span>
+                        </div>
+                        <div class="message-content">${message}</div>
+                    </div>
+                `;
+                
+                this.alphaMessages.insertAdjacentHTML('beforeend', errorElement);
+                this.betaMessages.insertAdjacentHTML('beforeend', errorElement);
+            }
+
+            showCorpusCommunication(data) {
+                const commElement = document.createElement('div');
+                commElement.className = 'corpus-communication';
+                commElement.textContent = `🔄 ${data.from} → ${data.to}: ${data.message}`;
+                
+                document.body.appendChild(commElement);
+                
+                // Remove after animation
+                setTimeout(() => {
+                    commElement.remove();
+                }, 2000);
+
+                // Also add to messages as communication log
+                const commMessage = `
+                    <div class="message message-communication">
+                        <div class="message-header">
+                            <span>🔄 Corpus Callosum</span>
+                            <span>${this.formatTimestamp(new Date().toISOString())}</span>
+                        </div>
+                        <div class="message-content">${data.from} → ${data.to}: ${data.content || data.message}</div>
+                    </div>
+                `;
+                
+                this.alphaMessages.insertAdjacentHTML('beforeend', commMessage);
+                this.betaMessages.insertAdjacentHTML('beforeend', commMessage);
+            }
+
+            setProcessing(processing) {
+                this.isProcessing = processing;
+                this.sendButton.disabled = processing;
+                
+                if (processing) {
+                    this.addThinkingIndicator('alpha');
+                    this.addThinkingIndicator('beta');
+                } else {
+                    this.removeThinkingIndicator('alpha');
+                    this.removeThinkingIndicator('beta');
+                }
+            }
+
+            addThinkingIndicator(brain) {
+                const container = brain === 'alpha' ? this.alphaMessages : this.betaMessages;
+                
+                // Remove existing indicator first
+                this.removeThinkingIndicator(brain);
+                
+                const indicator = document.createElement('div');
+                indicator.className = 'thinking-indicator';
+                indicator.id = `thinking-${brain}`;
+                indicator.innerHTML = `
+                    <span>${brain.charAt(0).toUpperCase() + brain.slice(1)} is thinking</span>
+                    <div class="thinking-dots">
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                    </div>
+                `;
+                
+                container.appendChild(indicator);
+                this.scrollToBottom(container);
+            }
+
+            removeThinkingIndicator(brain) {
+                const indicator = document.getElementById(`thinking-${brain}`);
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+
+            setMode(mode) {
+                this.currentMode = mode;
+                
+                // Update button states
+                this.modeButtons.forEach(button => {
+                    button.classList.toggle('active', button.dataset.mode === mode);
+                });
+
+                // Emit mode change to server
+                this.socket.emit('orchestration_change', {
+                    mode: mode,
+                    parameters: {}
+                });
+
+                console.log(`Mode changed to: ${mode}`);
+            }
+
+            formatContent(content) {
+                // Basic formatting for display
+                return content
+                    .replace(/\n/g, '<br>')
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>');
+            }
+
+            formatTimestamp(timestamp) {
+                return new Date(timestamp).toLocaleTimeString();
+            }
+
+            scrollToBottom(container) {
+                setTimeout(() => {
+                    container.scrollTop = container.scrollHeight;
+                }, 100);
+            }
+
+            generateConversationId() {
+                return `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+
+            updateTimestamps() {
+                const now = new Date().toLocaleTimeString();
+                const alphaTs = document.getElementById('alpha-timestamp');
+                const betaTs = document.getElementById('beta-timestamp');
+                
+                if (alphaTs) alphaTs.textContent = now;
+                if (betaTs) betaTs.textContent = now;
+            }
+        }
+
+        // Initialize the chat interface when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            window.dualBrainChat = new DualBrainChat();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "name": "dual-llm-chat",
+  "version": "1.0.0",
+  "description": "A dual-LLM split-brain architecture with real-time chat interface and Neo4j integration",
+  "main": "src/app.coffee",
+  "scripts": {
+    "dev": "nodemon --exec coffee src/app.coffee",
+    "compile": "coffee --compile --output lib/ src/",
+    "test": "mocha test/ --require coffeescript/register --recursive",
+    "lint": "coffeelint src/",
+    "start": "coffee src/app.coffee",
+    "neo4j:setup": "coffee scripts/seed-neo4j.coffee",
+    "docker:neo4j": "docker run --name neo4j -p7474:7474 -p7687:7687 -d -e NEO4J_AUTH=neo4j/password neo4j:latest"
+  },
+  "keywords": [
+    "llm",
+    "dual-brain",
+    "neo4j",
+    "coffeescript",
+    "chat",
+    "ollama"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "neo4j-driver": "^5.13.0",
+    "coffeescript": "^2.7.0",
+    "axios": "^1.5.0",
+    "winston": "^3.10.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "mocha": "^10.2.0",
+    "chai": "^4.3.8",
+    "coffeelint": "^2.1.0",
+    "sinon": "^15.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
