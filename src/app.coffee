@@ -27,9 +27,10 @@ class DualLLMApp
         methods: ["GET", "POST"]
     })
     @port = process.env.PORT || 3000
-    
+
+  initialize: ->
     # Initialize services
-    @initializeServices()
+    await @initializeServices()
     @setupMiddleware()
     @setupRoutes()
     @setupWebSockets()
@@ -40,6 +41,7 @@ class DualLLMApp
     
     # Initialize Neo4j connection
     @neo4jTool = new Neo4jTool(databaseConfig)
+    await @neo4jTool.connect()  # Ensure connection is established
     
     # Initialize LLM services
     @llmAlpha = new LLMAlpha(modelsConfig.alpha, ollamaConfig)
@@ -265,7 +267,13 @@ class DualLLMApp
       """
 
 # Start the application
-app = new DualLLMApp()
-app.start()
+startApp = ->
+  app = new DualLLMApp()
+  await app.initialize()
+  app.start()
 
-module.exports = app
+startApp().catch (error) ->
+  console.error 'Failed to start ClodBrain:', error
+  process.exit 1
+
+module.exports = DualLLMApp

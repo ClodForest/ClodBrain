@@ -24,7 +24,10 @@ class Neo4jTool
   executeQuery: (cypher, parameters = {}) ->
     session = null
     try
-      session = @getSession()
+      if not @driver
+        await @connect()
+      
+      session = @driver.session()
       result = await session.run(cypher, parameters)
       
       records = result.records.map (record) ->
