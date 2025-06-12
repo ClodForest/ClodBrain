@@ -37,9 +37,10 @@ class MessageRouter
 
       # Store AI responses in conversation and Neo4j
       if result.alphaResponse
+        alphaContent = if typeof result.alphaResponse is 'string' then result.alphaResponse else result.alphaResponse.content
         alphaMessage = {
           id: @generateMessageId()
-          content: result.alphaResponse
+          content: alphaContent
           sender: 'alpha'
           model: 'alpha'
           timestamp: result.timestamp
@@ -50,9 +51,10 @@ class MessageRouter
         await @storeMessageInNeo4j(alphaMessage, conversation)
 
       if result.betaResponse
+        betaContent = if typeof result.betaResponse is 'string' then result.betaResponse else result.betaResponse.content
         betaMessage = {
           id: @generateMessageId()
-          content: result.betaResponse
+          content: betaContent
           sender: 'beta'
           model: 'beta'
           timestamp: result.timestamp
@@ -63,9 +65,10 @@ class MessageRouter
         await @storeMessageInNeo4j(betaMessage, conversation)
 
       if result.synthesis
+        synthesisContent = if typeof result.synthesis is 'string' then result.synthesis else result.synthesis.content
         synthesisMessage = {
           id: @generateMessageId()
-          content: result.synthesis
+          content: synthesisContent
           sender: 'synthesis'
           model: 'synthesis'
           timestamp: result.timestamp
@@ -162,7 +165,7 @@ class MessageRouter
         id: message.id
         content: message.content
         sender: message.sender
-        model: message.model || message.sender
+        model: message.model || message.sender  # Ensure it's a string
         timestamp: message.timestamp
         conversationId: message.conversationId
       })
