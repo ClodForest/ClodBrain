@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dual-LLM Split Brain Chat</title>
+    <title>ClodBrain - Dual-LLM Split Brain Chat</title>
     <style>
         * {
             margin: 0;
@@ -171,7 +171,7 @@
 
         .message-header {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
             margin-bottom: 8px;
             font-size: 12px;
@@ -364,7 +364,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🧠 Dual-LLM Split Brain Chat</h1>
+            <h1>🧠 ClodBrain - Dual-LLM Split Brain Chat</h1>
             <div class="brain-status">
                 <div class="status-indicator status-alpha">
                     <div class="status-dot"></div>
@@ -431,7 +431,7 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        class DualBrainChat {
+        class ClodBrainChat {
             constructor() {
                 this.socket = io();
                 this.currentMode = 'parallel';
@@ -480,7 +480,7 @@
 
             connectSocket() {
                 this.socket.on('connect', () => {
-                    console.log('Connected to server');
+                    console.log('Connected to ClodBrain server');
                 });
 
                 this.socket.on('alpha_response', (data) => {
@@ -508,7 +508,7 @@
                 });
 
                 this.socket.on('disconnect', () => {
-                    console.log('Disconnected from server');
+                    console.log('Disconnected from ClodBrain server');
                 });
             }
 
@@ -677,7 +677,7 @@
                     parameters: {}
                 });
 
-                console.log(`Mode changed to: ${mode}`);
+                console.log(`ClodBrain mode changed to: ${mode}`);
             }
 
             formatContent(content) {
@@ -712,9 +712,9 @@
             }
         }
 
-        // Initialize the chat interface when page loads
+        // Initialize ClodBrain when page loads
         document.addEventListener('DOMContentLoaded', () => {
-            window.dualBrainChat = new DualBrainChat();
+            window.clodBrain = new ClodBrainChat();
         });
     </script>
 </body>
