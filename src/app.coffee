@@ -7,16 +7,18 @@ path = require 'path'
 require 'dotenv/config'
 
 # Import our services
-LLMAlpha = require './services/llm-alpha'
-LLMBeta = require './services/llm-beta'
+LLMAlpha       = require './services/llm-alpha'
+LLMBeta        = require './services/llm-beta'
 CorpusCallosum = require './services/corpus-callosum'
-Neo4jTool = require './services/neo4j-tool'
-MessageRouter = require './services/message-router'
+Neo4jTool      = require './services/neo4j-tool'
+MessageRouter  = require './services/message-router'
 
 # Import configurations
 databaseConfig = require './config/database'
-ollamaConfig = require './config/ollama'
-modelsConfig = require './config/models'
+ollamaConfig   = require './config/ollama'
+modelsConfig   = require './config/models'
+
+isoDateString  = -> new Date().toISOString()
 
 # ESM equivalent of __dirname
 __filename = fileURLToPath(import.meta.url)
@@ -79,7 +81,7 @@ class DualLLMApp
 
     # Request logging (replacing winston)
     @app.use (req, res, next) ->
-      timestamp = new Date().toISOString()
+      timestamp = isoDateString()
       console.log "#{timestamp} #{req.method} #{req.url}"
       next()
 
@@ -139,44 +141,32 @@ class DualLLMApp
     @app.get '/health', (req, res) =>
       try
         alphaHealth = await @llmAlpha.healthCheck()
-        betaHealth = await @llmBeta.healthCheck()
+        betaHealth  = await @llmBeta .healthCheck()
+
         res.json {
-          status: 'ok'
-          timestamp: new Date().toISOString()
+          status:    'ok'
+          timestamp: isoDateString()
           services:
-            alpha: alphaHealth.status
-            beta: betaHealth.status
-            neo4j: 'connected'  # TODO: actual health check
+            alpha:   alphaHealth.status
+            beta:     betaHealth.status
+            neo4j:   'connected'  # TODO: actual health check
         }
       catch error
         res.status(500).json {
-          status: 'error'
-          error: error.message
-          timestamp: new Date().toISOString()
+          status:    'error'
+          error:     error.message
+          timestamp: isoDateString()
         }
-
   setupWebSockets: ->
     @io.on 'connection', (socket) =>
       console.log 'User connected:', socket.id
 
-      # Handle user messages
-      socket.on 'message_send', (data) =>
-        @handleUserMessage(socket, data)
+      socket.on 'message_send',         (data) => @handleUserMessage                socket, data
+      socket.on 'orchestration_change', (data) => @handleOrchestrationChange        socket, data
+      socket.on 'neo4j_query',          (data) => @handleNeo4jQuery                 socket, data
+      socket.on 'model_interrupt',      (data) => @handleModelInterrupt             socket, data
 
-      # Handle orchestration changes
-      socket.on 'orchestration_change', (data) =>
-        @handleOrchestrationChange(socket, data)
-
-      # Handle Neo4j queries
-      socket.on 'neo4j_query', (data) =>
-        @handleNeo4jQuery(socket, data)
-
-      # Handle model interrupts
-      socket.on 'model_interrupt', (data) =>
-        @handleModelInterrupt(socket, data)
-
-      socket.on 'disconnect', ->
-        console.log 'User disconnected:', socket.id
+      socket.on 'disconnect',                  -> console.log 'User disconnected:', socket.id
 
   handleUserMessage: (socket, data) ->
     try
@@ -188,11 +178,11 @@ class DualLLMApp
       result = await @messageRouter.processMessage(message, mode, conversationId)
 
       console.log "Result from message router:", {
-        hasAlpha: !!result.alphaResponse
-        hasBeta: !!result.betaResponse
-        hasSynthesis: !!result.synthesis
-        alphaType: typeof result.alphaResponse
-        betaType: typeof result.betaResponse
+        hasAlpha:        !! result.alphaResponse
+        hasBeta:         !! result.betaResponse
+        hasSynthesis:    !! result.synthesis
+        alphaType:   typeof result.alphaResponse
+        betaType:    typeof result.betaResponse
       }
 
       # For handoff mode, clear the thinking indicator for the brain that didn't respond
@@ -210,7 +200,7 @@ class DualLLMApp
         console.log "Sending alpha response:", alphaContent?.substring(0, 100) + "..."
         socket.emit 'alpha_response', {
           content: alphaContent
-          timestamp: new Date().toISOString()
+          timestamp: isoDateString()
           model: @llmAlpha.model
         }
 
@@ -220,7 +210,7 @@ class DualLLMApp
         console.log "Beta content extracted:", betaContent?.substring(0, 100) + "..."
         socket.emit 'beta_response', {
           content: betaContent
-          timestamp: new Date().toISOString()
+          timestamp: isoDateString()
           model: @llmBeta.model
         }
 
@@ -229,7 +219,7 @@ class DualLLMApp
         console.log "Sending synthesis:", synthesisContent?.substring(0, 100) + "..."
         socket.emit 'synthesis_complete', {
           content: synthesisContent
-          timestamp: new Date().toISOString()
+          timestamp: isoDateString()
           mode: mode
         }
 
@@ -295,14 +285,14 @@ class DualLLMApp
   start: ->
     @server.listen @port, =>
       console.log """
-      🧠 Dual-LLM Chat System Started 🧠
-      Port: #{@port}
-      Environment: #{process.env.NODE_ENV || 'development'}
-      Alpha Model: #{@llmAlpha.model}
-      Beta Model: #{@llmBeta.model}
-      Neo4j: #{process.env.NEO4J_URI || 'bolt://localhost:7687'}
-      Ollama: #{process.env.OLLAMA_HOST || 'localhost:11434'}
-      """
+          🧠 Dual-LLM Chat System Started 🧠
+          Port: #{@port}
+          Environment: #{process.env.NODE_ENV || 'development'}
+          Alpha Model: #{@llmAlpha.model}
+          Beta Model: #{@llmBeta.model}
+          Neo4j: #{process.env.NEO4J_URI || 'bolt://localhost:7687'}
+          Ollama: #{process.env.OLLAMA_HOST || 'localhost:11434'}
+        """
 
 # Start the application
 startApp = ->
