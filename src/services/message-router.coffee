@@ -175,12 +175,13 @@ class MessageRouter
 
   storeCommunicationInNeo4j: (communication, conversationId) ->
     try
+      # Flatten the communication object to primitive values only
       query = '''
         MATCH (c:Conversation {id: $conversationId})
         CREATE (comm:Communication {
           id: $id,
-          from: $from,
-          to: $to,
+          fromBrain: $fromBrain,
+          toBrain: $toBrain,
           content: $content,
           type: $type,
           timestamp: $timestamp,
@@ -192,12 +193,12 @@ class MessageRouter
       
       await @neo4jTool.executeQuery(query, {
         id: @generateMessageId()
-        from: communication.from
-        to: communication.to
-        content: communication.message || communication.content
-        type: communication.type || 'general'
-        timestamp: new Date(communication.timestamp).toISOString()
-        conversationId: conversationId
+        fromBrain: String(communication.from || 'unknown')
+        toBrain: String(communication.to || 'unknown')
+        content: String(communication.message || communication.content || '')
+        type: String(communication.type || 'general')
+        timestamp: new Date(communication.timestamp || Date.now()).toISOString()
+        conversationId: String(conversationId)
       })
       
     catch error

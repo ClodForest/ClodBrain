@@ -202,7 +202,8 @@ class DualLLMApp
       
       if result.betaResponse
         betaContent = if typeof result.betaResponse is 'string' then result.betaResponse else result.betaResponse.content
-        console.log "Sending beta response:", betaContent?.substring(0, 100) + "..."
+        console.log "Beta response object:", JSON.stringify(result.betaResponse, null, 2)
+        console.log "Beta content extracted:", betaContent?.substring(0, 100) + "..."
         socket.emit 'beta_response', {
           content: betaContent
           timestamp: new Date().toISOString()
