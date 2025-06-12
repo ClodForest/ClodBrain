@@ -1,4 +1,4 @@
-# Corpus Callosum - Inter-LLM Communication Service
+# Corpus Callosum - Inter-LLM Communication Service (Fixed Debate Mode)
 class CorpusCallosum
   constructor: (@alpha, @beta, @config) ->
     @currentMode = @config.default_mode
@@ -108,14 +108,17 @@ class CorpusCallosum
     # Add handoff delay
     await @delay(@config.modes.sequential.handoff_delay)
     
+    # Extract content from response object
+    firstContent = if typeof firstResponse is 'string' then firstResponse else firstResponse.content
+    
     # Second model processes with context from first
-    contextMessage = "#{message}\n\nContext from #{order[0]}: #{firstResponse}"
+    contextMessage = "#{message}\n\nContext from #{order[0]}: #{firstContent}"
     secondResponse = await secondModel.processMessage(contextMessage, firstResponse)
     
     @recordCommunication(processId, {
       from: order[0]
       to: order[1]
-      message: firstResponse
+      message: firstContent
       type: 'handoff'
     })
     
@@ -133,17 +136,25 @@ class CorpusCallosum
     maxRounds = @config.modes.debate.max_rounds
     alphaResponse = await @alpha.processMessage(message, null)
     
+    # Extract content for comparison
+    alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
+    
+    # Store the full response object for return
+    currentAlphaResponse = alphaResponse
+    betaChallenge = null
+    
     for round in [1..maxRounds]
       # Beta challenges Alpha's response
       challengePrompt = """
       Original question: #{message}
-      Alpha's response: #{alphaResponse}
+      Alpha's response: #{alphaContent}
       
       Provide a creative challenge or alternative perspective to Alpha's response.
       Focus on what might be missing, alternative approaches, or creative insights.
       """
       
-      betaChallenge = await @beta.processMessage(challengePrompt, alphaResponse)
+      betaChallengeResponse = await @beta.processMessage(challengePrompt, alphaContent)
+      betaChallenge = if typeof betaChallengeResponse is 'string' then betaChallengeResponse else betaChallengeResponse.content
       
       @recordCommunication(processId, {
         from: 'beta'
@@ -156,7 +167,7 @@ class CorpusCallosum
       # Alpha refines based on Beta's challenge
       refinePrompt = """
       Original question: #{message}
-      Your previous response: #{alphaResponse}
+      Your previous response: #{alphaContent}
       Beta's challenge: #{betaChallenge}
       
       Refine your response considering Beta's creative perspective.
@@ -164,26 +175,28 @@ class CorpusCallosum
       """
       
       refinedResponse = await @alpha.processMessage(refinePrompt, betaChallenge)
+      refinedContent = if typeof refinedResponse is 'string' then refinedResponse else refinedResponse.content
       
       @recordCommunication(processId, {
         from: 'alpha'
         to: 'beta'
-        message: refinedResponse
+        message: refinedContent
         type: 'refinement'
         round: round
       })
       
-      # Check for convergence
-      if @calculateSimilarity(alphaResponse, refinedResponse) > @config.modes.debate.convergence_threshold
+      # Check for convergence (compare string content)
+      if @calculateSimilarity(alphaContent, refinedContent) > @config.modes.debate.convergence_threshold
         console.log "Debate converged after #{round} rounds"
         break
-        
-      alphaResponse = refinedResponse
+      
+      alphaContent = refinedContent
+      currentAlphaResponse = refinedResponse
     
     return {
       mode: 'debate'
-      alphaResponse: alphaResponse
-      betaResponse: betaChallenge
+      alphaResponse: currentAlphaResponse
+      betaResponse: betaChallengeResponse
       communications: @getProcessCommunications(processId)
       rounds: round
       timestamp: new Date().toISOString()
@@ -198,38 +211,42 @@ class CorpusCallosum
       @beta.processMessage(message, null)
     ])
     
+    # Extract content for synthesis prompt
+    alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
+    betaContent = if typeof betaResponse is 'string' then betaResponse else betaResponse.content
+    
     # Determine which model handles synthesis
     synthesisModel = if @config.modes.synthesis.synthesis_model is 'alpha' then @alpha else @beta
     
     synthesisPrompt = """
     Original question: #{message}
     
-    Alpha's analytical response: #{alphaResponse}
-    Beta's creative response: #{betaResponse}
+    Alpha's analytical response: #{alphaContent}
+    Beta's creative response: #{betaContent}
     
     Create a unified response that synthesizes both perspectives.
     Combine the logical rigor of Alpha with the creative insights of Beta.
     The result should be more complete than either individual response.
     """
     
-    synthesis = await synthesisModel.processMessage(synthesisPrompt, {
-      alpha: alphaResponse
-      beta: betaResponse
+    synthesisResponse = await synthesisModel.processMessage(synthesisPrompt, {
+      alpha: alphaContent
+      beta: betaContent
     })
     
     @recordCommunication(processId, {
       from: 'both'
       to: 'synthesis'
-      message: synthesis
+      message: if typeof synthesisResponse is 'string' then synthesisResponse else synthesisResponse.content
       type: 'synthesis'
-      inputs: { alpha: alphaResponse, beta: betaResponse }
+      inputs: { alpha: alphaContent, beta: betaContent }
     })
     
     return {
       mode: 'synthesis'
       alphaResponse: unless @config.modes.synthesis.show_individual then null else alphaResponse
       betaResponse: unless @config.modes.synthesis.show_individual then null else betaResponse
-      synthesis: synthesis
+      synthesis: synthesisResponse
       communications: @getProcessCommunications(processId)
       timestamp: new Date().toISOString()
     }
@@ -242,11 +259,12 @@ class CorpusCallosum
     
     if startsWithAlpha
       alphaResponse = await @alpha.processMessage(message, null)
+      alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
       
       # Check if Alpha wants to hand off to Beta
-      if @detectHandoffTrigger(alphaResponse)
-        handoffPrompt = "#{message}\n\nAlpha's initial analysis: #{alphaResponse}\n\nPlease continue with a creative perspective."
-        betaResponse = await @beta.processMessage(handoffPrompt, alphaResponse)
+      if @detectHandoffTrigger(alphaContent)
+        handoffPrompt = "#{message}\n\nAlpha's initial analysis: #{alphaContent}\n\nPlease continue with a creative perspective."
+        betaResponse = await @beta.processMessage(handoffPrompt, alphaContent)
         
         @recordCommunication(processId, {
           from: 'alpha'
@@ -274,10 +292,11 @@ class CorpusCallosum
         }
     else
       betaResponse = await @beta.processMessage(message, null)
+      betaContent = if typeof betaResponse is 'string' then betaResponse else betaResponse.content
       
-      if @detectHandoffTrigger(betaResponse)
-        handoffPrompt = "#{message}\n\nBeta's creative perspective: #{betaResponse}\n\nPlease provide analytical verification and structure."
-        alphaResponse = await @alpha.processMessage(handoffPrompt, betaResponse)
+      if @detectHandoffTrigger(betaContent)
+        handoffPrompt = "#{message}\n\nBeta's creative perspective: #{betaContent}\n\nPlease provide analytical verification and structure."
+        alphaResponse = await @alpha.processMessage(handoffPrompt, betaContent)
         
         @recordCommunication(processId, {
           from: 'beta'
@@ -339,9 +358,13 @@ class CorpusCallosum
     return triggerPhrases.some((phrase) -> lowerResponse.includes(phrase.toLowerCase()))
 
   calculateSimilarity: (text1, text2) ->
+    # Ensure we're working with strings
+    str1 = if typeof text1 is 'string' then text1 else String(text1)
+    str2 = if typeof text2 is 'string' then text2 else String(text2)
+    
     # Simple similarity calculation - in production, use proper NLP
-    words1 = text1.toLowerCase().split(/\s+/)
-    words2 = text2.toLowerCase().split(/\s+/)
+    words1 = str1.toLowerCase().split(/\s+/)
+    words2 = str2.toLowerCase().split(/\s+/)
     
     commonWords = words1.filter((word) -> words2.includes(word))
     totalWords = Math.max(words1.length, words2.length)
