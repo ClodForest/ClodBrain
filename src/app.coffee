@@ -38,18 +38,18 @@ class DualLLMApp
 
   initializeServices: ->
     console.log 'Initializing services...'
-    
+
     # Initialize Neo4j connection
     @neo4jTool = new Neo4jTool(databaseConfig)
     await @neo4jTool.connect()  # Ensure connection is established
-    
+
     # Initialize LLM services with Neo4j access
     @llmAlpha = new LLMAlpha(modelsConfig.alpha, ollamaConfig, @neo4jTool)
     @llmBeta = new LLMBeta(modelsConfig.beta, ollamaConfig, @neo4jTool)
-    
+
     # Initialize corpus callosum (communication layer)
     @corpusCallosum = new CorpusCallosum(@llmAlpha, @llmBeta, modelsConfig.corpus_callosum)
-    
+
     # Initialize message router
     @messageRouter = new MessageRouter(@corpusCallosum, @neo4jTool)
 
@@ -59,31 +59,31 @@ class DualLLMApp
       res.header 'Access-Control-Allow-Origin', '*'
       res.header 'Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS'
       res.header 'Access-Control-Allow-Headers', 'Content-Type, Authorization, Content-Length, X-Requested-With'
-      
+
       if req.method is 'OPTIONS'
         res.sendStatus 200
       else
         next()
-    
+
     # Basic security headers (replacing helmet)
     @app.use (req, res, next) ->
       res.setHeader 'X-Content-Type-Options', 'nosniff'
       res.setHeader 'X-Frame-Options', 'DENY'
       res.setHeader 'X-XSS-Protection', '1; mode=block'
       next()
-    
+
     # Request logging (replacing winston)
     @app.use (req, res, next) ->
       timestamp = new Date().toISOString()
       console.log "#{timestamp} #{req.method} #{req.url}"
       next()
-    
+
     @app.use express.json({ limit: '10mb' })
     @app.use express.urlencoded({ extended: true })
-    
+
     # Serve static files
     @app.use express.static(path.join(__dirname, '../public'))
-    
+
     # Make services available to routes
     @app.locals.messageRouter = @messageRouter
     @app.locals.neo4jTool = @neo4jTool
@@ -99,7 +99,7 @@ class DualLLMApp
       catch error
         console.error 'Chat API error:', error
         res.status(500).json({ error: error.message })
-    
+
     @app.get '/api/chat/history/:id', (req, res) =>
       try
         conversation = @messageRouter.getConversation(req.params.id)
@@ -107,7 +107,7 @@ class DualLLMApp
       catch error
         console.error 'History API error:', error
         res.status(500).json({ error: error.message })
-    
+
     @app.get '/api/models', (req, res) =>
       try
         alphaInfo = await @llmAlpha.getModelInfo()
@@ -116,7 +116,7 @@ class DualLLMApp
       catch error
         console.error 'Models API error:', error
         res.status(500).json({ error: error.message })
-    
+
     @app.post '/api/neo4j/query', (req, res) =>
       try
         { query, parameters = {} } = req.body
@@ -125,11 +125,11 @@ class DualLLMApp
       catch error
         console.error 'Neo4j API error:', error
         res.status(500).json({ error: error.message })
-    
+
     # Serve main page
     @app.get '/', (req, res) ->
       res.sendFile path.join(__dirname, '../public/index.html')
-    
+
     # Health check
     @app.get '/health', (req, res) =>
       try
@@ -153,35 +153,35 @@ class DualLLMApp
   setupWebSockets: ->
     @io.on 'connection', (socket) =>
       console.log 'User connected:', socket.id
-      
+
       # Handle user messages
       socket.on 'message_send', (data) =>
         @handleUserMessage(socket, data)
-      
+
       # Handle orchestration changes
       socket.on 'orchestration_change', (data) =>
         @handleOrchestrationChange(socket, data)
-      
+
       # Handle Neo4j queries
       socket.on 'neo4j_query', (data) =>
         @handleNeo4jQuery(socket, data)
-      
+
       # Handle model interrupts
       socket.on 'model_interrupt', (data) =>
         @handleModelInterrupt(socket, data)
-      
+
       socket.on 'disconnect', ->
         console.log 'User disconnected:', socket.id
 
   handleUserMessage: (socket, data) ->
     try
       { message, mode = 'parallel', conversationId } = data
-      
+
       console.log "Processing message: #{message} in mode: #{mode}"
-      
+
       # Process message through message router
       result = await @messageRouter.processMessage(message, mode, conversationId)
-      
+
       console.log "Result from message router:", {
         hasAlpha: !!result.alphaResponse
         hasBeta: !!result.betaResponse
@@ -189,7 +189,16 @@ class DualLLMApp
         alphaType: typeof result.alphaResponse
         betaType: typeof result.betaResponse
       }
-      
+
+      # For handoff mode, clear the thinking indicator for the brain that didn't respond
+      if mode is 'handoff'
+        if result.primary
+          # In handoff mode, only one brain is primary
+          if result.primary is 'alpha' and not result.betaResponse
+            socket.emit 'clear_beta_thinking'
+          else if result.primary is 'beta' and not result.alphaResponse
+            socket.emit 'clear_alpha_thinking'
+
       # Emit responses as they come in
       if result.alphaResponse
         alphaContent = if typeof result.alphaResponse is 'string' then result.alphaResponse else result.alphaResponse.content
@@ -199,7 +208,7 @@ class DualLLMApp
           timestamp: new Date().toISOString()
           model: @llmAlpha.model
         }
-      
+
       if result.betaResponse
         betaContent = if typeof result.betaResponse is 'string' then result.betaResponse else result.betaResponse.content
         console.log "Beta response object:", JSON.stringify(result.betaResponse, null, 2)
@@ -209,7 +218,7 @@ class DualLLMApp
           timestamp: new Date().toISOString()
           model: @llmBeta.model
         }
-      
+
       if result.synthesis
         synthesisContent = if typeof result.synthesis is 'string' then result.synthesis else result.synthesis.content
         console.log "Sending synthesis:", synthesisContent?.substring(0, 100) + "..."
@@ -218,12 +227,19 @@ class DualLLMApp
           timestamp: new Date().toISOString()
           mode: mode
         }
-      
+
       # Emit any corpus callosum communications
       if result.communications
         for comm in result.communications
           socket.emit 'corpus_communication', comm
-          
+
+      # For modes that don't have synthesis, signal completion
+      if mode in ['parallel', 'handoff', 'sequential'] and not result.synthesis
+        socket.emit 'interaction_complete', {
+          mode: mode
+          primary: result.primary  # For handoff mode
+        }
+
     catch error
       console.error 'Error handling user message:', error
       socket.emit 'error', { message: error.message }
@@ -262,11 +278,11 @@ class DualLLMApp
         error: 'Internal server error'
         message: if process.env.NODE_ENV is 'development' then error.message else 'Something went wrong'
       }
-    
+
     process.on 'uncaughtException', (error) ->
       console.error 'Uncaught Exception:', error
       process.exit 1
-    
+
     process.on 'unhandledRejection', (reason, promise) ->
       console.error 'Unhandled Rejection at:', promise, 'reason:', reason
       process.exit 1

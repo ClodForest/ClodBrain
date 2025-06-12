@@ -11,7 +11,7 @@ class LLMBeta extends BaseLLM
     # Look for BETA_TO_ALPHA: patterns
     betaPattern = /BETA_TO_ALPHA:\s*(.+?)(?=\n|$)/gi
     matches = []
-    
+
     match = betaPattern.exec(response)
     while match isnt null
       matches.push {
@@ -20,7 +20,7 @@ class LLMBeta extends BaseLLM
         timestamp: Date.now()
       }
       match = betaPattern.exec(response)
-    
+
     return matches
 
   # Override to specify Alpha as the other brain
@@ -36,7 +36,7 @@ class LLMBeta extends BaseLLM
     - Generate multiple perspectives
     - Focus on innovation and creativity
     """
-    
+
     return await @processMessage(brainstormPrompt)
 
   findPatterns: (data) ->
@@ -46,49 +46,54 @@ class LLMBeta extends BaseLLM
     - Identify unusual correlations
     - Suggest creative interpretations
     - Think about implications
-    
+
     Data: #{data}
     """
-    
+
     return await @processMessage(patternPrompt)
 
   generateAlternatives: (problem, currentSolution) ->
     alternativePrompt = """
     Given this problem and current solution, generate creative alternatives:
-    
+
     Problem: #{problem}
     Current Solution: #{currentSolution}
-    
+
     - Think of completely different approaches
     - Consider what others might miss
     - Explore unconventional methods
     - Focus on innovative solutions
     """
-    
+
     return await @processMessage(alternativePrompt)
 
   synthesizeIdeas: (ideas) ->
     synthesisPrompt = """
     Synthesize these ideas into novel combinations:
     #{if Array.isArray(ideas) then ideas.join('\n') else ideas}
-    
+
     - Find unexpected connections
     - Create hybrid approaches
     - Generate emergent concepts
     - Think about synergies
     """
-    
+
     return await @processMessage(synthesisPrompt)
 
   # Override parseResponse to handle Beta-specific fields
   parseResponse: (response) ->
     # Call parent parseResponse
     parsed = super(response)
-    
+
     # Add Beta-specific field names for compatibility
     if parsed.communication?.length > 0
       parsed.alphaCommunication = parsed.communication
-    
+
+    # Fix case where Beta puts entire response in communication pattern
+    if (!parsed.content or parsed.content.trim() is '') and parsed.communication?.length > 0
+      # Use the first communication as the main content
+      parsed.content = parsed.communication[0].content
+
     return parsed
 
   # Override healthCheck to return Beta-specific response

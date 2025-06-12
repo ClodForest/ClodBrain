@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧠 ClodBrain - Dual LLM Chat</title>
+
+    <!-- Include Marked.js for Markdown parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/11.1.1/marked.min.js"></script>
+    <!-- Include Prism.js for syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-coffeescript.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #2a2a2a;
+            padding: 1rem;
+            border-bottom: 2px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .brain-icon {
+            font-size: 2rem;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .mode-selector select {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #444;
+            position: relative;
+        }
+
+        .chat-panel:last-child {
+            border-right: none;
+        }
+
+        .panel-header {
+            background: #2a2a2a;
+            padding: 1rem;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .alpha-panel .panel-title {
+            color: #4a9eff;
+        }
+
+        .beta-panel .panel-title {
+            color: #ff6b6b;
+        }
+
+        .user-panel .panel-title {
+            color: #4ade80;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .status-indicator.active {
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            background: #2a2a2a;
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .message.user {
+            border-left-color: #4ade80;
+        }
+
+        .message.alpha {
+            border-left-color: #4a9eff;
+        }
+
+        .message.beta {
+            border-left-color: #ff6b6b;
+        }
+
+        .message.synthesis {
+            border-left-color: #fbbf24;
+        }
+
+        .message.communication {
+            border-left-color: #a78bfa;
+            font-style: italic;
+            opacity: 0.8;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            opacity: 0.7;
+        }
+
+        .message-sender {
+            font-weight: bold;
+        }
+
+        /* Markdown styling */
+        .message-content {
+            line-height: 1.6;
+        }
+
+        .message-content h1,
+        .message-content h2,
+        .message-content h3,
+        .message-content h4,
+        .message-content h5,
+        .message-content h6 {
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+
+        .message-content p {
+            margin-bottom: 0.5rem;
+        }
+
+        .message-content ul,
+        .message-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .message-content li {
+            margin-bottom: 0.25rem;
+        }
+
+        .message-content code {
+            background: #1a1a1a;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+        }
+
+        .message-content pre {
+            background: #1a1a1a;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin-bottom: 0.5rem;
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .message-content blockquote {
+            border-left: 3px solid #555;
+            padding-left: 1rem;
+            margin: 0.5rem 0;
+            font-style: italic;
+            opacity: 0.9;
+        }
+
+        .message-content a {
+            color: #4a9eff;
+            text-decoration: none;
+        }
+
+        .message-content a:hover {
+            text-decoration: underline;
+        }
+
+        .message-content table {
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+            width: 100%;
+        }
+
+        .message-content th,
+        .message-content td {
+            border: 1px solid #444;
+            padding: 0.5rem;
+            text-align: left;
+        }
+
+        .message-content th {
+            background: #333;
+            font-weight: bold;
+        }
+
+        .message-content hr {
+            border: none;
+            border-top: 1px solid #444;
+            margin: 1rem 0;
+        }
+
+        .input-container {
+            padding: 1rem;
+            background: #2a2a2a;
+            border-top: 1px solid #444;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        #messageInput {
+            flex: 1;
+            background: #333;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 0.75rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-family: inherit;
+            resize: none;
+        }
+
+        #messageInput:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        #sendButton {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #sendButton:hover {
+            background: #357abd;
+        }
+
+        #sendButton:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        .thinking {
+            display: flex;
+            gap: 0.3rem;
+            padding: 0.5rem 0;
+        }
+
+        .thinking span {
+            width: 8px;
+            height: 8px;
+            background: #666;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .thinking span:nth-child(1) { animation-delay: -0.32s; }
+        .thinking span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        .error-message {
+            background: #dc2626;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            margin: 0.5rem;
+            animation: shake 0.5s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>
+            <span class="brain-icon">🧠</span>
+            ClodBrain
+            <span class="brain-icon">🧠</span>
+        </h1>
+        <div class="mode-selector">
+            <label for="orchestrationMode">Mode:</label>
+            <select id="orchestrationMode">
+                <option value="parallel">Parallel</option>
+                <option value="sequential">Sequential</option>
+                <option value="debate">Debate</option>
+                <option value="synthesis">Synthesis</option>
+                <option value="handoff">Handoff</option>
+            </select>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="chat-panel alpha-panel">
+            <div class="panel-header">
+                <span class="panel-title">Alpha (Analytical)</span>
+                <span class="status-indicator" id="alphaStatus"></span>
+            </div>
+            <div class="messages-container" id="alphaMessages"></div>
+        </div>
+
+        <div class="chat-panel user-panel">
+            <div class="panel-header">
+                <span class="panel-title">Conversation</span>
+                <span class="status-indicator active"></span>
+            </div>
+            <div class="messages-container" id="userMessages"></div>
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea
+                        id="messageInput"
+                        placeholder="Type your message... (Shift+Enter for new line)"
+                        rows="2"
+                    ></textarea>
+                    <button id="sendButton">Send</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-panel beta-panel">
+            <div class="panel-header">
+                <span class="panel-title">Beta (Creative)</span>
+                <span class="status-indicator" id="betaStatus"></span>
+            </div>
+            <div class="messages-container" id="betaMessages"></div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Configure marked options
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && Prism.languages[lang]) {
+                    return Prism.highlight(code, Prism.languages[lang], lang);
+                }
+                return code;
+            },
+            breaks: true,
+            gfm: true
+        });
+
+        // Initialize Socket.IO
+        const socket = io();
+
+        // DOM elements
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const orchestrationMode = document.getElementById('orchestrationMode');
+        const alphaMessages = document.getElementById('alphaMessages');
+        const betaMessages = document.getElementById('betaMessages');
+        const userMessages = document.getElementById('userMessages');
+        const alphaStatus = document.getElementById('alphaStatus');
+        const betaStatus = document.getElementById('betaStatus');
+
+        // State
+        let isProcessing = false;
+        let conversationId = null;
+
+        // Render markdown content
+        function renderMarkdown(content) {
+            return marked.parse(content);
+        }
+
+        // Add message to panel
+        function addMessage(panel, sender, content, type = 'message') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender} ${type}`;
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'message-header';
+
+            const senderSpan = document.createElement('span');
+            senderSpan.className = 'message-sender';
+            senderSpan.textContent = sender.charAt(0).toUpperCase() + sender.slice(1);
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'message-time';
+            timeSpan.textContent = new Date().toLocaleTimeString();
+
+            headerDiv.appendChild(senderSpan);
+            headerDiv.appendChild(timeSpan);
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = renderMarkdown(content);
+
+            messageDiv.appendChild(headerDiv);
+            messageDiv.appendChild(contentDiv);
+
+            panel.appendChild(messageDiv);
+            panel.scrollTop = panel.scrollHeight;
+
+            // Apply syntax highlighting to code blocks
+            Prism.highlightAllUnder(contentDiv);
+        }
+
+        // Add thinking indicator
+        function addThinkingIndicator(panel, id) {
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'thinking';
+            thinkingDiv.id = id;
+            thinkingDiv.innerHTML = '<span></span><span></span><span></span>';
+            panel.appendChild(thinkingDiv);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        // Remove thinking indicator
+        function removeThinkingIndicator(id) {
+            const indicator = document.getElementById(id);
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            userMessages.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+
+        // Send message
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isProcessing) return;
+
+            isProcessing = true;
+            sendButton.disabled = true;
+            messageInput.disabled = true;
+
+            // Add user message to center panel
+            addMessage(userMessages, 'user', message);
+
+            // Clear input
+            messageInput.value = '';
+
+            // Show thinking indicators
+            alphaStatus.classList.add('active');
+            betaStatus.classList.add('active');
+            addThinkingIndicator(alphaMessages, 'alphaThinking');
+            addThinkingIndicator(betaMessages, 'betaThinking');
+
+            // Send via socket
+            socket.emit('message_send', {
+                message: message,
+                mode: orchestrationMode.value,
+                conversationId: conversationId
+            });
+        }
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to ClodBrain');
+        });
+
+        socket.on('alpha_response', (data) => {
+            removeThinkingIndicator('alphaThinking');
+            alphaStatus.classList.remove('active');
+            addMessage(alphaMessages, 'alpha', data.content);
+
+            // Also add to center panel in non-synthesis modes
+            if (orchestrationMode.value !== 'synthesis') {
+                addMessage(userMessages, 'alpha', data.content);
+            }
+        });
+
+        socket.on('beta_response', (data) => {
+            removeThinkingIndicator('betaThinking');
+            betaStatus.classList.remove('active');
+            addMessage(betaMessages, 'beta', data.content);
+
+            // Also add to center panel in non-synthesis modes
+            if (orchestrationMode.value !== 'synthesis') {
+                addMessage(userMessages, 'beta', data.content);
+            }
+        });
+
+        socket.on('synthesis_complete', (data) => {
+            if (data.content) {
+                addMessage(userMessages, 'synthesis', data.content);
+            }
+            isProcessing = false;
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+            messageInput.focus();
+        });
+
+        socket.on('corpus_communication', (data) => {
+            const message = `[${data.from} → ${data.to}] ${data.message}`;
+            addMessage(userMessages, 'communication', message, 'communication');
+        });
+
+        socket.on('error', (data) => {
+            removeThinkingIndicator('alphaThinking');
+            removeThinkingIndicator('betaThinking');
+            alphaStatus.classList.remove('active');
+            betaStatus.classList.remove('active');
+            showError(data.message);
+            isProcessing = false;
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+        });
+
+        // UI event handlers
+        sendButton.addEventListener('click', sendMessage);
+
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        orchestrationMode.addEventListener('change', (e) => {
+            socket.emit('orchestration_change', {
+                mode: e.target.value,
+                parameters: {}
+            });
+        });
+
+        // Focus on input on load
+        messageInput.focus();
+    </script>
+</body>
+</html>
