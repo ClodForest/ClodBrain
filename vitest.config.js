@@ -1,25 +1,21 @@
 import { defineConfig } from 'vitest/config'
-import coffee from 'vite-plugin-coffee'
+import coffee from 'vite-plugin-coffee3'
 
 export default defineConfig({
   plugins: [
-    coffee({
-      jsx: false,
-      transpile: {
-        presets: ['@babel/preset-env']
-      }
-    })
+    coffee()
   ],
   test: {
     globals: true,
     environment: 'node',
-    include: ['t/**/*.coffee'],
+    include: ['t/**/*.test.coffee'],
+    exclude: ['t/setup.coffee'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       exclude: [
         'node_modules/',
-        'test/',
+        't/',
         'public/',
         'bin/',
         '**/*.config.js'

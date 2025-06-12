@@ -5,7 +5,7 @@
 ClodBrain uses **Vitest** as its testing framework - a blazing fast unit test framework powered by Vite. It was chosen for:
 
 - Zero configuration needed
-- Native CoffeeScript support via plugin
+- CoffeeScript support via vite-plugin-coffee3
 - Built-in mocking and coverage
 - Watch mode with intelligent test re-running
 - Compatible with Jest APIs
@@ -13,7 +13,7 @@ ClodBrain uses **Vitest** as its testing framework - a blazing fast unit test fr
 ## Test Structure
 
 ```
-test/
+t/
 ├── setup.coffee           # Common test utilities and mocks
 ├── services/              # Unit tests for each service
 │   ├── base-llm.test.coffee

@@ -1,27 +1,32 @@
-# Main Express application
-express = require 'express'
-http = require 'http'
-socketIo = require 'socket.io'
-path = require 'path'
-require 'dotenv/config'
+# Main Express application (ESM)
+import express from 'express'
+import http from 'http'
+import { Server } from 'socket.io'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import 'dotenv/config'
 
 # Import our services
-LLMAlpha = require './services/llm-alpha'
-LLMBeta = require './services/llm-beta'
-CorpusCallosum = require './services/corpus-callosum'
-Neo4jTool = require './services/neo4j-tool'
-MessageRouter = require './services/message-router'
+import LLMAlpha from './services/llm-alpha.js'
+import LLMBeta from './services/llm-beta.js'
+import CorpusCallosum from './services/corpus-callosum.js'
+import Neo4jTool from './services/neo4j-tool.js'
+import MessageRouter from './services/message-router.js'
 
 # Import configurations
-databaseConfig = require './config/database'
-ollamaConfig = require './config/ollama'
-modelsConfig = require './config/models'
+import databaseConfig from './config/database.js'
+import ollamaConfig from './config/ollama.js'
+import modelsConfig from './config/models.js'
+
+# ESM equivalent of __dirname
+__filename = fileURLToPath(import.meta.url)
+__dirname = path.dirname(__filename)
 
 class DualLLMApp
   constructor: ->
     @app = express()
     @server = http.createServer(@app)
-    @io = socketIo(@server, {
+    @io = new Server(@server, {
       cors:
         origin: "*"
         methods: ["GET", "POST"]
@@ -309,4 +314,4 @@ startApp().catch (error) ->
   console.error 'Failed to start ClodBrain:', error
   process.exit 1
 
-module.exports = DualLLMApp
+export default DualLLMApp
