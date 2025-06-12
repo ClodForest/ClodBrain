@@ -232,7 +232,7 @@ EOF
 
 # Create README
 echo "📖 Creating README..."
-cat > README.md << 'EOF'
+cat > docs/README.md << 'EOF'
 # Dual-LLM Split Brain Chat System
 
 A NodeJS/Express application implementing a dual-LLM "split-brain" architecture where two models collaborate through controlled communication patterns. Built entirely in CoffeeScript with real-time chat interface and Neo4j tool integration.
