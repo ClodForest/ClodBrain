@@ -177,27 +177,43 @@ class DualLLMApp
     try
       { message, mode = 'parallel', conversationId } = data
       
+      console.log "Processing message: #{message} in mode: #{mode}"
+      
       # Process message through message router
       result = await @messageRouter.processMessage(message, mode, conversationId)
       
+      console.log "Result from message router:", {
+        hasAlpha: !!result.alphaResponse
+        hasBeta: !!result.betaResponse
+        hasSynthesis: !!result.synthesis
+        alphaType: typeof result.alphaResponse
+        betaType: typeof result.betaResponse
+      }
+      
       # Emit responses as they come in
       if result.alphaResponse
+        alphaContent = if typeof result.alphaResponse is 'string' then result.alphaResponse else result.alphaResponse.content
+        console.log "Sending alpha response:", alphaContent?.substring(0, 100) + "..."
         socket.emit 'alpha_response', {
-          content: result.alphaResponse
+          content: alphaContent
           timestamp: new Date().toISOString()
           model: @llmAlpha.model
         }
       
       if result.betaResponse
+        betaContent = if typeof result.betaResponse is 'string' then result.betaResponse else result.betaResponse.content
+        console.log "Sending beta response:", betaContent?.substring(0, 100) + "..."
         socket.emit 'beta_response', {
-          content: result.betaResponse
+          content: betaContent
           timestamp: new Date().toISOString()
           model: @llmBeta.model
         }
       
       if result.synthesis
+        synthesisContent = if typeof result.synthesis is 'string' then result.synthesis else result.synthesis.content
+        console.log "Sending synthesis:", synthesisContent?.substring(0, 100) + "..."
         socket.emit 'synthesis_complete', {
-          content: result.synthesis
+          content: synthesisContent
           timestamp: new Date().toISOString()
           mode: mode
         }

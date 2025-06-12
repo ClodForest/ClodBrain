@@ -681,8 +681,15 @@
             }
 
             formatContent(content) {
+                // Ensure content is a string and handle undefined/null
+                if (!content) return '';
+                
+                const contentStr = typeof content === 'string' ? content : 
+                                 content.content ? content.content : 
+                                 JSON.stringify(content);
+                
                 // Basic formatting for display
-                return content
+                return contentStr
                     .replace(/\n/g, '<br>')
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     .replace(/\*(.*?)\*/g, '<em>$1</em>');
