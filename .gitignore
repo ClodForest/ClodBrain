@@ -38,6 +38,11 @@ lib/
 *.swo
 *~
 
+# Vim swap files
+*.tmp
+.*.swp
+.*.swo
+
 # OS generated files
 .DS_Store
 .DS_Store?
@@ -52,7 +57,3 @@ Thumbs.db
 
 # Docker
 .docker/
-
-# Vim
-.sw?
-.*.sw?
