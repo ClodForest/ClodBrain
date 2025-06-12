@@ -3,8 +3,6 @@ express = require 'express'
 http = require 'http'
 socketIo = require 'socket.io'
 path = require 'path'
-cors = require 'cors'
-helmet = require 'helmet'
 require 'dotenv/config'
 
 # Import our services
@@ -18,15 +16,6 @@ MessageRouter = require './services/message-router'
 databaseConfig = require './config/database'
 ollamaConfig = require './config/ollama'
 modelsConfig = require './config/models'
-
-# Import middleware
-loggingMiddleware = require './middleware/logging'
-errorHandler = require './middleware/error-handler'
-
-# Import controllers
-chatController = require './controllers/chat'
-modelsController = require './controllers/models'
-neo4jController = require './controllers/neo4j'
 
 class DualLLMApp
   constructor: ->
@@ -63,11 +52,32 @@ class DualLLMApp
     @messageRouter = new MessageRouter(@corpusCallosum, @neo4jTool)
 
   setupMiddleware: ->
-    @app.use helmet()
-    @app.use cors()
+    # Basic CORS handling (replacing cors middleware)
+    @app.use (req, res, next) ->
+      res.header 'Access-Control-Allow-Origin', '*'
+      res.header 'Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS'
+      res.header 'Access-Control-Allow-Headers', 'Content-Type, Authorization, Content-Length, X-Requested-With'
+      
+      if req.method is 'OPTIONS'
+        res.sendStatus 200
+      else
+        next()
+    
+    # Basic security headers (replacing helmet)
+    @app.use (req, res, next) ->
+      res.setHeader 'X-Content-Type-Options', 'nosniff'
+      res.setHeader 'X-Frame-Options', 'DENY'
+      res.setHeader 'X-XSS-Protection', '1; mode=block'
+      next()
+    
+    # Request logging (replacing winston)
+    @app.use (req, res, next) ->
+      timestamp = new Date().toISOString()
+      console.log "#{timestamp} #{req.method} #{req.url}"
+      next()
+    
     @app.use express.json({ limit: '10mb' })
     @app.use express.urlencoded({ extended: true })
-    @app.use loggingMiddleware
     
     # Serve static files
     @app.use express.static(path.join(__dirname, '../public'))
@@ -78,24 +88,65 @@ class DualLLMApp
     @app.locals.corpusCallosum = @corpusCallosum
 
   setupRoutes: ->
-    # API routes
-    @app.use '/api/chat', chatController
-    @app.use '/api/models', modelsController
-    @app.use '/api/neo4j', neo4jController
+    # API routes (inline instead of separate controllers for now)
+    @app.post '/api/chat/message', (req, res) =>
+      try
+        { message, mode = 'parallel', conversationId } = req.body
+        result = await @messageRouter.processMessage(message, mode, conversationId)
+        res.json(result)
+      catch error
+        console.error 'Chat API error:', error
+        res.status(500).json({ error: error.message })
+    
+    @app.get '/api/chat/history/:id', (req, res) =>
+      try
+        conversation = @messageRouter.getConversation(req.params.id)
+        res.json(conversation || { error: 'Conversation not found' })
+      catch error
+        console.error 'History API error:', error
+        res.status(500).json({ error: error.message })
+    
+    @app.get '/api/models', (req, res) =>
+      try
+        alphaInfo = await @llmAlpha.getModelInfo()
+        betaInfo = await @llmBeta.getModelInfo()
+        res.json({ alpha: alphaInfo, beta: betaInfo })
+      catch error
+        console.error 'Models API error:', error
+        res.status(500).json({ error: error.message })
+    
+    @app.post '/api/neo4j/query', (req, res) =>
+      try
+        { query, parameters = {} } = req.body
+        result = await @neo4jTool.executeQuery(query, parameters)
+        res.json(result)
+      catch error
+        console.error 'Neo4j API error:', error
+        res.status(500).json({ error: error.message })
     
     # Serve main page
     @app.get '/', (req, res) ->
       res.sendFile path.join(__dirname, '../public/index.html')
     
     # Health check
-    @app.get '/health', (req, res) ->
-      res.json {
-        status: 'ok'
-        timestamp: new Date().toISOString()
-        services:
-          neo4j: 'connected'  # TODO: actual health check
-          ollama: 'connected'  # TODO: actual health check
-      }
+    @app.get '/health', (req, res) =>
+      try
+        alphaHealth = await @llmAlpha.healthCheck()
+        betaHealth = await @llmBeta.healthCheck()
+        res.json {
+          status: 'ok'
+          timestamp: new Date().toISOString()
+          services:
+            alpha: alphaHealth.status
+            beta: betaHealth.status
+            neo4j: 'connected'  # TODO: actual health check
+        }
+      catch error
+        res.status(500).json {
+          status: 'error'
+          error: error.message
+          timestamp: new Date().toISOString()
+        }
 
   setupWebSockets: ->
     @io.on 'connection', (socket) =>
@@ -178,7 +229,6 @@ class DualLLMApp
 
   handleModelInterrupt: (socket, data) ->
     try
-      # TODO: Implement model interruption logic
       @messageRouter.interrupt()
       socket.emit 'models_interrupted'
     catch error
@@ -186,7 +236,13 @@ class DualLLMApp
       socket.emit 'error', { message: error.message }
 
   setupErrorHandling: ->
-    @app.use errorHandler
+    # Global error handler (replacing dedicated error handler middleware)
+    @app.use (error, req, res, next) ->
+      console.error 'Unhandled error:', error
+      res.status(500).json {
+        error: 'Internal server error'
+        message: if process.env.NODE_ENV is 'development' then error.message else 'Something went wrong'
+      }
     
     process.on 'uncaughtException', (error) ->
       console.error 'Uncaught Exception:', error
