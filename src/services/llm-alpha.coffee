@@ -2,7 +2,7 @@
 axios = require 'axios'
 
 class LLMAlpha
-  constructor: (@config, @ollamaConfig) ->
+  constructor: (@config, @ollamaConfig, @neo4jTool = null) ->
     @model = @config.model
     @role = @config.role
     @personality = @config.personality
@@ -14,21 +14,49 @@ class LLMAlpha
 
   processMessage: (message, context = null) ->
     try
-      # Build the prompt with system context
-      prompt = @buildPrompt(message, context)
+      # Check if message contains graph queries
+      graphContext = await @handleGraphQueries(message)
+      
+      # Build the prompt with system context and graph data
+      prompt = @buildPrompt(message, context, graphContext)
       
       # Make request to Ollama
       response = await @makeOllamaRequest(prompt)
       
-      # Parse and return response
-      return @parseResponse(response)
+      # Parse response and handle any graph operations
+      parsedResponse = @parseResponse(response)
+      await @handleGraphOperations(parsedResponse, message)
+      
+      return parsedResponse
       
     catch error
       console.error 'LLM Alpha processing error:', error
       throw new Error("Alpha processing failed: #{error.message}")
 
-  buildPrompt: (message, context) ->
+  buildPrompt: (message, context, graphContext = null) ->
     promptParts = [@systemPrompt]
+    
+    # Add graph access instructions
+    if @neo4jTool
+      promptParts.push '''
+        You have access to a knowledge graph database. You can:
+        
+        QUERY: Use GRAPH_QUERY: followed by a natural language question to search the graph
+        Examples: 
+        - GRAPH_QUERY: What conversations have we had?
+        - GRAPH_QUERY: What entities have been mentioned?
+        - GRAPH_QUERY: Show me concepts we've discussed
+        
+        STORE: Use GRAPH_STORE: followed by entities/facts to save to the graph
+        Examples:
+        - GRAPH_STORE: Entity: Claude, Type: AI Assistant, Confidence: 0.9
+        - GRAPH_STORE: Concept: Machine Learning, Domain: Technology
+        
+        Use these capabilities to provide more informed, contextual responses.
+      '''
+    
+    if graphContext
+      promptParts.push "Graph Context: #{graphContext}"
     
     if context
       if typeof context is 'string'
@@ -108,16 +136,108 @@ class LLMAlpha
     
     return matches
 
+  # Handle graph queries in the user message
+  handleGraphQueries: (message) ->
+    return null unless @neo4jTool
+    
+    # Look for requests about previous conversations, entities, etc.
+    lowerMessage = message.toLowerCase()
+    graphContext = []
+    
+    if lowerMessage.includes('previous') or lowerMessage.includes('before') or lowerMessage.includes('earlier')
+      try
+        conversations = await @neo4jTool.naturalLanguageQuery('conversations')
+        if conversations.records?.length > 0
+          graphContext.push "Recent conversations: #{conversations.records.length} found"
+      catch error
+        console.error 'Graph query error:', error
+    
+    if lowerMessage.includes('entities') or lowerMessage.includes('mentioned')
+      try
+        entities = await @neo4jTool.naturalLanguageQuery('entities')
+        if entities.records?.length > 0
+          entityNames = entities.records.map((r) -> r.name).slice(0, 5)
+          graphContext.push "Known entities: #{entityNames.join(', ')}"
+      catch error
+        console.error 'Graph query error:', error
+    
+    return if graphContext.length > 0 then graphContext.join('; ') else null
+
+  # Handle graph operations in the response
+  handleGraphOperations: (parsedResponse, originalMessage) ->
+    return unless @neo4jTool and parsedResponse.content
+    
+    # Look for GRAPH_QUERY: patterns
+    graphQueries = @extractGraphQueries(parsedResponse.content)
+    for query in graphQueries
+      try
+        result = await @neo4jTool.naturalLanguageQuery(query)
+        console.log "Alpha executed graph query: #{query}"
+      catch error
+        console.error "Alpha graph query failed:", error
+    
+    # Look for GRAPH_STORE: patterns  
+    graphStores = @extractGraphStores(parsedResponse.content)
+    for store in graphStores
+      try
+        await @storeToGraph(store)
+        console.log "Alpha stored to graph: #{store}"
+      catch error
+        console.error "Alpha graph store failed:", error
+
+  extractGraphQueries: (content) ->
+    queryPattern = /GRAPH_QUERY:\s*(.+?)(?=\n|$)/gi
+    matches = []
+    match = queryPattern.exec(content)
+    while match isnt null
+      matches.push match[1].trim()
+      match = queryPattern.exec(content)
+    return matches
+
+  extractGraphStores: (content) ->
+    storePattern = /GRAPH_STORE:\s*(.+?)(?=\n|$)/gi
+    matches = []
+    match = storePattern.exec(content)
+    while match isnt null
+      matches.push match[1].trim()
+      match = storePattern.exec(content)
+    return matches
+
+  storeToGraph: (storeCommand) ->
+    # Parse store commands like "Entity: Claude, Type: AI Assistant, Confidence: 0.9"
+    if storeCommand.toLowerCase().startsWith('entity:')
+      parts = storeCommand.substring(7).split(',').map((s) -> s.trim())
+      entityData = { name: parts[0] }
+      
+      for part in parts.slice(1)
+        [key, value] = part.split(':').map((s) -> s.trim())
+        if key and value
+          entityData[key.toLowerCase()] = value
+      
+      await @neo4jTool.addKnowledge([entityData], [])
+      
+    else if storeCommand.toLowerCase().startsWith('concept:')
+      parts = storeCommand.substring(8).split(',').map((s) -> s.trim())
+      conceptData = { name: parts[0], type: 'concept' }
+      
+      for part in parts.slice(1)
+        [key, value] = part.split(':').map((s) -> s.trim())
+        if key and value
+          conceptData[key.toLowerCase()] = value
+      
+      # Store as entity for now (could extend for proper concept storage)
+      await @neo4jTool.addKnowledge([conceptData], [])
+
   cleanResponse: (response) ->
-    # Remove internal communication markers
+    # Remove internal communication markers and graph commands
     cleaned = response.replace(/ALPHA_TO_BETA:\s*.+?(?=\n|$)/gi, '')
+    cleaned = cleaned.replace(/GRAPH_QUERY:\s*.+?(?=\n|$)/gi, '')
+    cleaned = cleaned.replace(/GRAPH_STORE:\s*.+?(?=\n|$)/gi, '')
     
     # Clean up extra whitespace
     cleaned = cleaned.replace(/\n\s*\n/g, '\n').trim()
     
     return cleaned
-
-  communicateWithBeta: (message, intent = 'general') ->
     # Format communication for Beta
     communication = {
       from: 'alpha'

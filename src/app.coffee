@@ -43,9 +43,9 @@ class DualLLMApp
     @neo4jTool = new Neo4jTool(databaseConfig)
     await @neo4jTool.connect()  # Ensure connection is established
     
-    # Initialize LLM services
-    @llmAlpha = new LLMAlpha(modelsConfig.alpha, ollamaConfig)
-    @llmBeta = new LLMBeta(modelsConfig.beta, ollamaConfig)
+    # Initialize LLM services with Neo4j access
+    @llmAlpha = new LLMAlpha(modelsConfig.alpha, ollamaConfig, @neo4jTool)
+    @llmBeta = new LLMBeta(modelsConfig.beta, ollamaConfig, @neo4jTool)
     
     # Initialize corpus callosum (communication layer)
     @corpusCallosum = new CorpusCallosum(@llmAlpha, @llmBeta, modelsConfig.corpus_callosum)
