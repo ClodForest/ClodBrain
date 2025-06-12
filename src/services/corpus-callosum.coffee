@@ -1,21 +1,34 @@
-# Corpus Callosum - Inter-LLM Communication Service (Fixed Debate Mode)
+# Corpus Callosum - Inter-LLM Communication Service (Data-Driven Refactor)
 class CorpusCallosum
   constructor: (@alpha, @beta, @config) ->
     @currentMode = @config.default_mode
     @communicationHistory = []
     @activeProcesses = new Map()
-    @patterns = new Map()  # Learn communication patterns over time
+    @patterns = new Map()
     
-    # Communication modes
-    @MODES =
-      PARALLEL: 'parallel'
-      SEQUENTIAL: 'sequential'
-      DEBATE: 'debate'
-      SYNTHESIS: 'synthesis'
-      HANDOFF: 'handoff'
+    # Data-driven mode definitions
+    @modeHandlers = 
+      parallel: @createParallelHandler()
+      sequential: @createSequentialHandler()
+      debate: @createDebateHandler()
+      synthesis: @createSynthesisHandler()
+      handoff: @createHandoffHandler()
+    
+    # Message classification rules
+    @messageClassifiers = [
+      { pattern: /\b(how|what|why|when|where|who)\b/, type: 'question' }
+      { pattern: /\b(create|make|design|build|generate)\b/, type: 'creation' }
+      { pattern: /\b(analyze|examine|evaluate|assess|review)\b/, type: 'analysis' }
+      { pattern: /\b(help|assist|support|guide)\b/, type: 'assistance' }
+    ]
+    
+    # Keyword scoring for model selection
+    @modelSelectionRules =
+      alpha: ['analyze', 'calculate', 'verify', 'facts', 'data', 'logical', 'step', 'method']
+      beta: ['create', 'imagine', 'design', 'alternative', 'innovative', 'brainstorm', 'idea']
 
   setMode: (mode, parameters = {}) ->
-    unless mode in Object.values(@MODES)
+    unless @modeHandlers[mode]
       throw new Error "Invalid mode: #{mode}"
     
     @currentMode = mode
@@ -26,7 +39,7 @@ class CorpusCallosum
     activeMode = mode || @currentMode
     processId = @generateProcessId()
     
-    @activeProcesses.set processId, {
+    process = {
       mode: activeMode
       startTime: Date.now()
       userMessage: userMessage
@@ -34,342 +47,322 @@ class CorpusCallosum
       communications: []
     }
     
+    @activeProcesses.set(processId, process)
+    
     try
-      result = switch activeMode
-        when @MODES.PARALLEL
-          await @runParallel(userMessage, processId)
-        when @MODES.SEQUENTIAL
-          await @runSequential(userMessage, processId)
-        when @MODES.DEBATE
-          await @runDebate(userMessage, processId)
-        when @MODES.SYNTHESIS
-          await @runSynthesis(userMessage, processId)
-        when @MODES.HANDOFF
-          await @runHandoff(userMessage, processId)
-        else
-          throw new Error "Unknown mode: #{activeMode}"
+      handler = @modeHandlers[activeMode]
+      unless handler
+        throw new Error "Unknown mode: #{activeMode}"
       
-      # Store successful communication pattern
+      result = await handler(userMessage, processId)
       @storePattern(activeMode, userMessage, result)
-      
       return result
       
     finally
-      @activeProcesses.delete processId
+      @activeProcesses.delete(processId)
 
-  runParallel: (message, processId) ->
-    console.log "Running parallel mode for: #{message}"
-    
-    # Both models process simultaneously
-    [alphaPromise, betaPromise] = [
-      @alpha.processMessage(message, null)
-      @beta.processMessage(message, null)
-    ]
-    
-    # Wait for both with timeout
-    try
-      results = await Promise.allSettled([
-        @withTimeout(alphaPromise, @config.communication_timeout)
-        @withTimeout(betaPromise, @config.communication_timeout)
-      ])
+  # Factory methods for mode handlers
+  createParallelHandler: ->
+    (message, processId) =>
+      console.log "Running parallel mode for: #{message}"
       
-      alphaResponse = if results[0].status is 'fulfilled' then results[0].value else null
-      betaResponse = if results[1].status is 'fulfilled' then results[1].value else null
+      promises = [@alpha, @beta].map (model) => 
+        @withTimeout(model.processMessage(message, null), @config.communication_timeout)
       
-      # Log any failures
-      if results[0].status is 'rejected'
-        console.error 'Alpha failed:', results[0].reason
-      if results[1].status is 'rejected'
-        console.error 'Beta failed:', results[1].reason
+      results = await Promise.allSettled(promises)
+      
+      [alphaResult, betaResult] = results.map (result, index) =>
+        if result.status is 'rejected'
+          console.error "#{['Alpha', 'Beta'][index]} failed:", result.reason
+          return null
+        result.value
       
       return {
         mode: 'parallel'
-        alphaResponse: alphaResponse
-        betaResponse: betaResponse
+        alphaResponse: alphaResult
+        betaResponse: betaResult
         communications: @getProcessCommunications(processId)
         timestamp: new Date().toISOString()
       }
-      
-    catch error
-      console.error 'Parallel processing error:', error
-      throw error
 
-  runSequential: (message, processId) ->
-    console.log "Running sequential mode for: #{message}"
-    
-    order = @modeParameters?.order || @config.modes.sequential.default_order
-    
-    firstModel = if order[0] is 'alpha' then @alpha else @beta
-    secondModel = if order[0] is 'alpha' then @beta else @alpha
-    
-    # First model processes
-    firstResponse = await firstModel.processMessage(message, null)
-    
-    # Add handoff delay
-    await @delay(@config.modes.sequential.handoff_delay)
-    
-    # Extract content from response object
-    firstContent = if typeof firstResponse is 'string' then firstResponse else firstResponse.content
-    
-    # Second model processes with context from first
-    contextMessage = "#{message}\n\nContext from #{order[0]}: #{firstContent}"
-    secondResponse = await secondModel.processMessage(contextMessage, firstResponse)
-    
-    @recordCommunication(processId, {
-      from: order[0]
-      to: order[1]
-      message: firstContent
-      type: 'handoff'
-    })
-    
-    return {
-      mode: 'sequential'
-      alphaResponse: if order[0] is 'alpha' then firstResponse else secondResponse
-      betaResponse: if order[0] is 'beta' then firstResponse else secondResponse
-      communications: @getProcessCommunications(processId)
-      timestamp: new Date().toISOString()
-    }
-
-  runDebate: (message, processId) ->
-    console.log "Running debate mode for: #{message}"
-    
-    maxRounds = @config.modes.debate.max_rounds
-    alphaResponse = await @alpha.processMessage(message, null)
-    
-    # Extract content for comparison
-    alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
-    
-    # Store the full response object for return
-    currentAlphaResponse = alphaResponse
-    betaChallenge = null
-    
-    for round in [1..maxRounds]
-      # Beta challenges Alpha's response
-      challengePrompt = """
-      Original question: #{message}
-      Alpha's response: #{alphaContent}
+  createSequentialHandler: ->
+    (message, processId) =>
+      console.log "Running sequential mode for: #{message}"
       
-      Provide a creative challenge or alternative perspective to Alpha's response.
-      Focus on what might be missing, alternative approaches, or creative insights.
-      """
+      order = @modeParameters?.order || @config.modes.sequential.default_order
+      models = { alpha: @alpha, beta: @beta }
       
-      betaChallengeResponse = await @beta.processMessage(challengePrompt, alphaContent)
-      betaChallenge = if typeof betaChallengeResponse is 'string' then betaChallengeResponse else betaChallengeResponse.content
+      [firstKey, secondKey] = order
+      firstModel = models[firstKey]
+      secondModel = models[secondKey]
+      
+      firstResponse = await firstModel.processMessage(message, null)
+      await @delay(@config.modes.sequential.handoff_delay)
+      
+      firstContent = @extractContent(firstResponse)
+      contextMessage = "#{message}\n\nContext from #{firstKey}: #{firstContent}"
+      secondResponse = await secondModel.processMessage(contextMessage, firstResponse)
       
       @recordCommunication(processId, {
-        from: 'beta'
-        to: 'alpha'
-        message: betaChallenge
-        type: 'challenge'
-        round: round
+        from: firstKey, to: secondKey
+        message: firstContent, type: 'handoff'
       })
       
-      # Alpha refines based on Beta's challenge
-      refinePrompt = """
-      Original question: #{message}
-      Your previous response: #{alphaContent}
-      Beta's challenge: #{betaChallenge}
+      responses = { [firstKey]: firstResponse, [secondKey]: secondResponse }
       
-      Refine your response considering Beta's creative perspective.
-      Integrate valid points while maintaining analytical rigor.
-      """
+      return {
+        mode: 'sequential'
+        alphaResponse: responses.alpha
+        betaResponse: responses.beta
+        communications: @getProcessCommunications(processId)
+        timestamp: new Date().toISOString()
+      }
+
+  createDebateHandler: ->
+    (message, processId) =>
+      console.log "Running debate mode for: #{message}"
       
-      refinedResponse = await @alpha.processMessage(refinePrompt, betaChallenge)
-      refinedContent = if typeof refinedResponse is 'string' then refinedResponse else refinedResponse.content
+      state = 
+        alphaResponse: await @alpha.processMessage(message, null)
+        betaResponse: null
+        round: 0
+      
+      debateRound = (state) =>
+        state.round++
+        alphaContent = @extractContent(state.alphaResponse)
+        
+        # Beta challenges
+        challengePrompt = @buildDebatePrompt('challenge', message, alphaContent)
+        state.betaResponse = await @beta.processMessage(challengePrompt, alphaContent)
+        betaContent = @extractContent(state.betaResponse)
+        
+        @recordCommunication(processId, {
+          from: 'beta', to: 'alpha'
+          message: betaContent, type: 'challenge'
+          round: state.round
+        })
+        
+        # Alpha refines
+        refinePrompt = @buildDebatePrompt('refine', message, alphaContent, betaContent)
+        refinedResponse = await @alpha.processMessage(refinePrompt, betaContent)
+        refinedContent = @extractContent(refinedResponse)
+        
+        @recordCommunication(processId, {
+          from: 'alpha', to: 'beta'
+          message: refinedContent, type: 'refinement'
+          round: state.round
+        })
+        
+        converged = @calculateSimilarity(alphaContent, refinedContent) > 
+                   @config.modes.debate.convergence_threshold
+        
+        if converged
+          console.log "Debate converged after #{state.round} rounds"
+        
+        state.alphaResponse = refinedResponse
+        return { converged, state }
+      
+      # Run debate rounds
+      maxRounds = @config.modes.debate.max_rounds
+      while state.round < maxRounds
+        result = await debateRound(state)
+        break if result.converged
+      
+      return {
+        mode: 'debate'
+        alphaResponse: state.alphaResponse
+        betaResponse: state.betaResponse
+        communications: @getProcessCommunications(processId)
+        rounds: state.round
+        timestamp: new Date().toISOString()
+      }
+
+  createSynthesisHandler: ->
+    (message, processId) =>
+      console.log "Running synthesis mode for: #{message}"
+      
+      [alphaResponse, betaResponse] = await Promise.all([
+        @alpha.processMessage(message, null)
+        @beta.processMessage(message, null)
+      ])
+      
+      contents = 
+        alpha: @extractContent(alphaResponse)
+        beta: @extractContent(betaResponse)
+      
+      synthesisModel = @getSynthesisModel()
+      synthesisPrompt = @buildSynthesisPrompt(message, contents)
+      
+      synthesisResponse = await synthesisModel.processMessage(synthesisPrompt, contents)
       
       @recordCommunication(processId, {
-        from: 'alpha'
-        to: 'beta'
-        message: refinedContent
-        type: 'refinement'
-        round: round
+        from: 'both', to: 'synthesis'
+        message: @extractContent(synthesisResponse)
+        type: 'synthesis'
+        inputs: contents
       })
       
-      # Check for convergence (compare string content)
-      if @calculateSimilarity(alphaContent, refinedContent) > @config.modes.debate.convergence_threshold
-        console.log "Debate converged after #{round} rounds"
-        break
+      showIndividual = @config.modes.synthesis.show_individual
       
-      alphaContent = refinedContent
-      currentAlphaResponse = refinedResponse
-    
-    return {
-      mode: 'debate'
-      alphaResponse: currentAlphaResponse
-      betaResponse: betaChallengeResponse
-      communications: @getProcessCommunications(processId)
-      rounds: round
-      timestamp: new Date().toISOString()
-    }
+      return {
+        mode: 'synthesis'
+        alphaResponse: if showIndividual then alphaResponse else null
+        betaResponse: if showIndividual then betaResponse else null
+        synthesis: synthesisResponse
+        communications: @getProcessCommunications(processId)
+        timestamp: new Date().toISOString()
+      }
 
-  runSynthesis: (message, processId) ->
-    console.log "Running synthesis mode for: #{message}"
-    
-    # Get both responses
-    [alphaResponse, betaResponse] = await Promise.all([
-      @alpha.processMessage(message, null)
-      @beta.processMessage(message, null)
-    ])
-    
-    # Extract content for synthesis prompt
-    alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
-    betaContent = if typeof betaResponse is 'string' then betaResponse else betaResponse.content
-    
-    # Determine which model handles synthesis
-    synthesisModel = if @config.modes.synthesis.synthesis_model is 'alpha' then @alpha else @beta
-    
-    synthesisPrompt = """
+  createHandoffHandler: ->
+    (message, processId) =>
+      console.log "Running handoff mode for: #{message}"
+      
+      startModel = @selectStartModel(message)
+      models = { alpha: @alpha, beta: @beta }
+      
+      primaryResponse = await models[startModel].processMessage(message, null)
+      primaryContent = @extractContent(primaryResponse)
+      
+      shouldHandoff = @detectHandoffTrigger(primaryContent)
+      
+      unless shouldHandoff
+        return @buildHandoffResult(
+          startModel, 
+          { [startModel]: primaryResponse },
+          processId
+        )
+      
+      # Handoff needed
+      otherModel = if startModel is 'alpha' then 'beta' else 'alpha'
+      handoffPrompt = @buildHandoffPrompt(message, startModel, primaryContent)
+      secondaryResponse = await models[otherModel].processMessage(handoffPrompt, primaryContent)
+      
+      @recordCommunication(processId, {
+        from: startModel, to: otherModel
+        message: "Handing off for #{@getHandoffReason(startModel)}"
+        type: 'handoff'
+      })
+      
+      return @buildHandoffResult(
+        otherModel,
+        { [startModel]: primaryResponse, [otherModel]: secondaryResponse },
+        processId
+      )
+
+  # Helper methods
+  extractContent: (response) ->
+    if typeof response is 'string' then response else response.content
+
+  buildDebatePrompt: (type, message, alphaContent, betaContent = null) ->
+    prompts =
+      challenge: """
+        Original question: #{message}
+        Alpha's response: #{alphaContent}
+        
+        Provide a creative challenge or alternative perspective to Alpha's response.
+        Focus on what might be missing, alternative approaches, or creative insights.
+      """
+      refine: """
+        Original question: #{message}
+        Your previous response: #{alphaContent}
+        Beta's challenge: #{betaContent}
+        
+        Refine your response considering Beta's creative perspective.
+        Integrate valid points while maintaining analytical rigor.
+      """
+    prompts[type]
+
+  buildSynthesisPrompt: (message, contents) ->
+    """
     Original question: #{message}
     
-    Alpha's analytical response: #{alphaContent}
-    Beta's creative response: #{betaContent}
+    Alpha's analytical response: #{contents.alpha}
+    Beta's creative response: #{contents.beta}
     
     Create a unified response that synthesizes both perspectives.
     Combine the logical rigor of Alpha with the creative insights of Beta.
     The result should be more complete than either individual response.
     """
+
+  buildHandoffPrompt: (message, fromModel, content) ->
+    perspectives =
+      alpha: "Alpha's initial analysis"
+      beta: "Beta's creative perspective"
     
-    synthesisResponse = await synthesisModel.processMessage(synthesisPrompt, {
-      alpha: alphaContent
-      beta: betaContent
-    })
+    continuations =
+      alpha: "Please continue with a creative perspective."
+      beta: "Please provide analytical verification and structure."
     
-    @recordCommunication(processId, {
-      from: 'both'
-      to: 'synthesis'
-      message: if typeof synthesisResponse is 'string' then synthesisResponse else synthesisResponse.content
-      type: 'synthesis'
-      inputs: { alpha: alphaContent, beta: betaContent }
-    })
-    
-    return {
-      mode: 'synthesis'
-      alphaResponse: unless @config.modes.synthesis.show_individual then null else alphaResponse
-      betaResponse: unless @config.modes.synthesis.show_individual then null else betaResponse
-      synthesis: synthesisResponse
+    "#{message}\n\n#{perspectives[fromModel]}: #{content}\n\n#{continuations[fromModel]}"
+
+  buildHandoffResult: (primaryModel, responses, processId) ->
+    {
+      mode: 'handoff'
+      alphaResponse: responses.alpha || null
+      betaResponse: responses.beta || null
+      primary: primaryModel
       communications: @getProcessCommunications(processId)
       timestamp: new Date().toISOString()
     }
 
-  runHandoff: (message, processId) ->
-    console.log "Running handoff mode for: #{message}"
-    
-    # Determine which model should start based on message content
-    startsWithAlpha = @shouldStartWithAlpha(message)
-    
-    if startsWithAlpha
-      alphaResponse = await @alpha.processMessage(message, null)
-      alphaContent = if typeof alphaResponse is 'string' then alphaResponse else alphaResponse.content
-      
-      # Check if Alpha wants to hand off to Beta
-      if @detectHandoffTrigger(alphaContent)
-        handoffPrompt = "#{message}\n\nAlpha's initial analysis: #{alphaContent}\n\nPlease continue with a creative perspective."
-        betaResponse = await @beta.processMessage(handoffPrompt, alphaContent)
-        
-        @recordCommunication(processId, {
-          from: 'alpha'
-          to: 'beta'
-          message: 'Handing off for creative input'
-          type: 'handoff'
-        })
-        
-        return {
-          mode: 'handoff'
-          alphaResponse: alphaResponse
-          betaResponse: betaResponse
-          primary: 'beta'  # Beta took over
-          communications: @getProcessCommunications(processId)
-          timestamp: new Date().toISOString()
-        }
-      else
-        return {
-          mode: 'handoff'
-          alphaResponse: alphaResponse
-          betaResponse: null
-          primary: 'alpha'  # Alpha handled it
-          communications: @getProcessCommunications(processId)
-          timestamp: new Date().toISOString()
-        }
-    else
-      betaResponse = await @beta.processMessage(message, null)
-      betaContent = if typeof betaResponse is 'string' then betaResponse else betaResponse.content
-      
-      if @detectHandoffTrigger(betaContent)
-        handoffPrompt = "#{message}\n\nBeta's creative perspective: #{betaContent}\n\nPlease provide analytical verification and structure."
-        alphaResponse = await @alpha.processMessage(handoffPrompt, betaContent)
-        
-        @recordCommunication(processId, {
-          from: 'beta'
-          to: 'alpha'
-          message: 'Handing off for analytical verification'
-          type: 'handoff'
-        })
-        
-        return {
-          mode: 'handoff'
-          alphaResponse: alphaResponse
-          betaResponse: betaResponse
-          primary: 'alpha'  # Alpha took over
-          communications: @getProcessCommunications(processId)
-          timestamp: new Date().toISOString()
-        }
-      else
-        return {
-          mode: 'handoff'
-          alphaResponse: null
-          betaResponse: betaResponse
-          primary: 'beta'  # Beta handled it
-          communications: @getProcessCommunications(processId)
-          timestamp: new Date().toISOString()
-        }
+  getHandoffReason: (fromModel) ->
+    reasons =
+      alpha: "creative input"
+      beta: "analytical verification"
+    reasons[fromModel]
 
-  # Utility methods
+  getSynthesisModel: ->
+    modelName = @config.modes.synthesis.synthesis_model
+    if modelName is 'alpha' then @alpha else @beta
+
+  selectStartModel: (message) ->
+    scores = {}
+    lowerMessage = message.toLowerCase()
+    
+    for model, keywords of @modelSelectionRules
+      scores[model] = keywords.filter((word) -> lowerMessage.includes(word)).length
+    
+    if scores.alpha >= scores.beta then 'alpha' else 'beta'
+
+  detectHandoffTrigger: (response) ->
+    triggerPhrases = @config.modes.handoff.trigger_phrases
+    lowerResponse = response.toLowerCase()
+    triggerPhrases.some((phrase) -> lowerResponse.includes(phrase.toLowerCase()))
+
+  classifyMessage: (message) ->
+    lowerMessage = message.toLowerCase()
+    
+    for classifier in @messageClassifiers
+      return classifier.type if classifier.pattern.test(lowerMessage)
+    
+    return 'general'
+
+  # Unchanged utility methods
   generateProcessId: ->
     "proc_#{Date.now()}_#{Math.random().toString(36).substr(2, 9)}"
 
   recordCommunication: (processId, communication) ->
     process = @activeProcesses.get(processId)
-    if process
-      communication.timestamp = Date.now()
-      process.communications.push communication
-      @communicationHistory.push {
-        processId: processId
-        ...communication
-      }
+    return unless process
+    
+    communication.timestamp = Date.now()
+    process.communications.push(communication)
+    @communicationHistory.push({ processId, ...communication })
 
   getProcessCommunications: (processId) ->
-    process = @activeProcesses.get(processId)
-    if process then process.communications else []
-
-  shouldStartWithAlpha: (message) ->
-    # Heuristics to determine which model should start
-    analyticalKeywords = ['analyze', 'calculate', 'verify', 'facts', 'data', 'logical', 'step', 'method']
-    creativeKeywords = ['create', 'imagine', 'design', 'alternative', 'innovative', 'brainstorm', 'idea']
-    
-    lowerMessage = message.toLowerCase()
-    analyticalScore = analyticalKeywords.filter((word) -> lowerMessage.includes(word)).length
-    creativeScore = creativeKeywords.filter((word) -> lowerMessage.includes(word)).length
-    
-    return analyticalScore >= creativeScore
-
-  detectHandoffTrigger: (response) ->
-    triggerPhrases = @config.modes.handoff.trigger_phrases
-    lowerResponse = response.toLowerCase()
-    return triggerPhrases.some((phrase) -> lowerResponse.includes(phrase.toLowerCase()))
+    @activeProcesses.get(processId)?.communications || []
 
   calculateSimilarity: (text1, text2) ->
-    # Ensure we're working with strings
-    str1 = if typeof text1 is 'string' then text1 else String(text1)
-    str2 = if typeof text2 is 'string' then text2 else String(text2)
+    str1 = String(text1).toLowerCase()
+    str2 = String(text2).toLowerCase()
     
-    # Simple similarity calculation - in production, use proper NLP
-    words1 = str1.toLowerCase().split(/\s+/)
-    words2 = str2.toLowerCase().split(/\s+/)
+    words1 = str1.split(/\s+/)
+    words2 = str2.split(/\s+/)
     
     commonWords = words1.filter((word) -> words2.includes(word))
     totalWords = Math.max(words1.length, words2.length)
     
-    return if totalWords > 0 then commonWords.length / totalWords else 0
+    if totalWords > 0 then commonWords.length / totalWords else 0
 
   storePattern: (mode, message, result) ->
     pattern = {
@@ -380,33 +373,14 @@ class CorpusCallosum
     }
     
     key = "#{pattern.mode}_#{pattern.messageType}"
-    if not @patterns.has(key)
-      @patterns.set(key, [])
+    @patterns.set(key, []) unless @patterns.has(key)
     
-    @patterns.get(key).push(pattern)
-    
-    # Keep only last 100 patterns per type
     patterns = @patterns.get(key)
-    if patterns.length > 100
-      @patterns.set(key, patterns.slice(-100))
-
-  classifyMessage: (message) ->
-    # Simple message classification
-    lowerMessage = message.toLowerCase()
-    
-    if /\b(how|what|why|when|where|who)\b/.test(lowerMessage)
-      return 'question'
-    else if /\b(create|make|design|build|generate)\b/.test(lowerMessage)
-      return 'creation'
-    else if /\b(analyze|examine|evaluate|assess|review)\b/.test(lowerMessage)
-      return 'analysis'
-    else if /\b(help|assist|support|guide)\b/.test(lowerMessage)
-      return 'assistance'
-    else
-      return 'general'
+    patterns.push(pattern)
+    @patterns.set(key, patterns.slice(-100)) if patterns.length > 100
 
   withTimeout: (promise, timeoutMs) ->
-    return Promise.race([
+    Promise.race([
       promise
       new Promise((_, reject) ->
         setTimeout((-> reject(new Error('Timeout'))), timeoutMs)
@@ -417,12 +391,11 @@ class CorpusCallosum
     new Promise((resolve) -> setTimeout(resolve, ms))
 
   interrupt: ->
-    # Cancel all active processes
     console.log "Interrupting #{@activeProcesses.size} active processes"
     @activeProcesses.clear()
 
   getStats: ->
-    return {
+    {
       currentMode: @currentMode
       activeProcesses: @activeProcesses.size
       totalCommunications: @communicationHistory.length
