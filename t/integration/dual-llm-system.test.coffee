@@ -1,6 +1,6 @@
 # Integration Tests - Full System
-{ describe, it, expect, beforeEach, afterEach, vi } = require 'vitest'
-DualLLMApp = require '../../src/app'
+{ describe, it, beforeEach, afterEach, mock } = require 'node:test'
+assert = require 'node:assert'
 {
   createMockOllamaResponse
   createMockNeo4jDriver
@@ -11,12 +11,12 @@ axios = require 'axios'
 socketClient = require 'socket.io-client'
 
 # Mock all external dependencies
-vi.mock 'axios'
-vi.mock 'socket.io-client'
-vi.mock 'neo4j-driver', ->
+mock.module 'axios'
+mock.module 'socket.io-client'
+mock.module 'neo4j-driver', ->
   {
-    driver: vi.fn().mockImplementation(-> createMockNeo4jDriver())
-    auth: { basic: vi.fn() }
+    driver: mock.fn().mock.mockImplementation(-> createMockNeo4jDriver())
+    auth: { basic: mock.fn() }
   }
 
 describe 'Dual LLM System Integration', ->
@@ -30,7 +30,7 @@ describe 'Dual LLM System Integration', ->
     process.env.NODE_ENV = 'test'
 
     # Mock Ollama responses
-    axios.post.mockImplementation((url, data) ->
+    axios.post.mock.mockImplementation((url, data) ->
       if url.includes('/api/generate')
         model = data.model
         content = if model.includes('alpha')
@@ -43,7 +43,7 @@ describe 'Dual LLM System Integration', ->
       return Promise.reject(new Error('Unknown endpoint'))
     )
 
-    axios.get.mockImplementation((url) ->
+    axios.get.mock.mockImplementation((url) ->
       if url.includes('/api/tags')
         return Promise.resolve({
           data: {
@@ -62,7 +62,7 @@ describe 'Dual LLM System Integration', ->
 
     # Mock socket client
     mockSocket = createMockSocket()
-    socketClient.connect.mockReturnValue(mockSocket)
+    socketClient.connect.mock.mockImplementation(-> mockSocket)
 
   afterEach ->
     # Clean up
@@ -76,11 +76,11 @@ describe 'Dual LLM System Integration', ->
       await app.initialize()
 
       # Check services initialized
-      expect(app.llmAlpha).toBeTruthy()
-      expect(app.llmBeta).toBeTruthy()
-      expect(app.corpusCallosum).toBeTruthy()
-      expect(app.neo4jTool).toBeTruthy()
-      expect(app.messageRouter).toBeTruthy()
+      assert.ok app.llmAlpha
+      assert.ok app.llmBeta
+      assert.ok app.corpusCallosum
+      assert.ok app.neo4jTool
+      assert.ok app.messageRouter
 
       # Start server
       await new Promise((resolve) ->
@@ -88,7 +88,7 @@ describe 'Dual LLM System Integration', ->
         setTimeout(resolve, 100)
       )
 
-      expect(app.server.listening).toBe(true)
+      assert.equal app.server.listening, true
 
     it 'should handle initialization errors gracefully', ->
       # Make Neo4j connection fail
@@ -111,7 +111,7 @@ describe 'Dual LLM System Integration', ->
         mode: 'parallel'
       })
 
-      expect(response.data).toMatchObject({
+      assert.deepEqual response.data,({
         conversationId: expect.any(String)
         userMessage: {
           content: 'Hello world'
@@ -124,7 +124,7 @@ describe 'Dual LLM System Integration', ->
     it 'should get model information', ->
       response = await axios.get("#{baseURL}/api/models")
 
-      expect(response.data).toMatchObject({
+      assert.deepEqual response.data,({
         alpha: {
           model: 'llama3.1:8b-instruct-q4_K_M'
           role: 'analytical'
@@ -140,7 +140,7 @@ describe 'Dual LLM System Integration', ->
     it 'should check health status', ->
       response = await axios.get("#{baseURL}/health")
 
-      expect(response.data).toMatchObject({
+      assert.deepEqual response.data,({
         status: 'ok'
         timestamp: expect.any(String)
         services: {
@@ -178,10 +178,10 @@ describe 'Dual LLM System Integration', ->
       alphaEmission = emissions.find((e) -> e.event is 'alpha_response')
       betaEmission = emissions.find((e) -> e.event is 'beta_response')
 
-      expect(alphaEmission).toBeTruthy()
+      assert.ok alphaEmission
       expect(alphaEmission.data.content).toContain('Analytical response')
 
-      expect(betaEmission).toBeTruthy()
+      assert.ok betaEmission
       expect(betaEmission.data.content).toContain('Creative response')
 
     it 'should handle synthesis mode', ->
@@ -200,12 +200,12 @@ describe 'Dual LLM System Integration', ->
       emissions = mockSocket.getEmitted()
       synthesisEmission = emissions.find((e) -> e.event is 'synthesis_complete')
 
-      expect(synthesisEmission).toBeTruthy()
-      expect(synthesisEmission.data.mode).toBe('synthesis')
+      assert.ok synthesisEmission
+      assert.equal synthesisEmission.data.mode, 'synthesis'
 
     it 'should handle handoff mode correctly', ->
       # Mock handoff response
-      app.corpusCallosum.orchestrate = vi.fn().mockResolvedValue({
+      app.corpusCallosum.orchestrate = mock.fn().mockResolvedValue({
         alphaResponse: { content: 'Alpha handled this' }
         betaResponse: null
         primary: 'alpha'
@@ -228,12 +228,12 @@ describe 'Dual LLM System Integration', ->
 
       # Should clear beta thinking
       clearBetaEmission = emissions.find((e) -> e.event is 'clear_beta_thinking')
-      expect(clearBetaEmission).toBeTruthy()
+      assert.ok clearBetaEmission
 
       # Should emit completion
       completionEmission = emissions.find((e) -> e.event is 'interaction_complete')
-      expect(completionEmission).toBeTruthy()
-      expect(completionEmission.data.primary).toBe('alpha')
+      assert.ok completionEmission
+      assert.equal completionEmission.data.primary, 'alpha'
 
   describe 'Communication Modes', ->
     beforeEach ->
@@ -244,15 +244,15 @@ describe 'Dual LLM System Integration', ->
     it 'should switch between modes dynamically', ->
       # Test parallel mode
       result1 = await app.messageRouter.processMessage('Test parallel', 'parallel')
-      expect(result1.alphaResponse).toBeTruthy()
-      expect(result1.betaResponse).toBeTruthy()
+      assert.ok result1.alphaResponse
+      assert.ok result1.betaResponse
 
       # Switch to sequential
       app.corpusCallosum.setMode('sequential')
 
       # Mock sequential behavior
       callCount = 0
-      axios.post.mockImplementation((url, data) ->
+      axios.post.mock.mockImplementation((url, data) ->
         if url.includes('/api/generate')
           callCount++
           content = if callCount is 1
@@ -266,7 +266,7 @@ describe 'Dual LLM System Integration', ->
       )
 
       result2 = await app.messageRouter.processMessage('Test sequential', 'sequential')
-      expect(axios.post).toHaveBeenCalledTimes(2)
+      assert.equal axios.post.mock.calls.length, 2
 
   describe 'Neo4j Integration', ->
     beforeEach ->
@@ -287,7 +287,7 @@ describe 'Dual LLM System Integration', ->
       conversationQuery = queries.find((call) ->
         call[0].includes('CREATE (c:Conversation')
       )
-      expect(conversationQuery).toBeTruthy()
+      assert.ok conversationQuery
 
       messageQueries = queries.filter((call) ->
         call[0].includes('CREATE (m:Message')
@@ -321,13 +321,13 @@ describe 'Dual LLM System Integration', ->
       await waitForPromises()
 
     it 'should handle Ollama connection errors', ->
-      axios.post.mockRejectedValue(new Error('ECONNREFUSED'))
+      axios.post.mock.mockImplementation(-> Promise.reject(new Error('ECONNREFUSED')))
 
       response = await axios.post("#{baseURL}/api/chat/message", {
         message: 'Test'
       }).catch((e) -> e.response)
 
-      expect(response.status).toBe(500)
+      assert.equal response.status, 500
       expect(response.data.error).toContain('Cannot connect to Ollama')
 
     it 'should handle websocket errors gracefully', ->
@@ -335,7 +335,7 @@ describe 'Dual LLM System Integration', ->
       connectionHandler?(mockSocket)
 
       # Make orchestration fail
-      app.corpusCallosum.orchestrate = vi.fn().mockRejectedValue(
+      app.corpusCallosum.orchestrate = mock.fn().mockRejectedValue(
         new Error('Orchestration failed')
       )
 
@@ -348,8 +348,8 @@ describe 'Dual LLM System Integration', ->
       emissions = mockSocket.getEmitted()
       errorEmission = emissions.find((e) -> e.event is 'error')
 
-      expect(errorEmission).toBeTruthy()
-      expect(errorEmission.data.message).toBe('Orchestration failed')
+      assert.ok errorEmission
+      assert.equal errorEmission.data.message, 'Orchestration failed'
 
   describe 'Concurrent Requests', ->
     beforeEach ->
@@ -370,7 +370,7 @@ describe 'Dual LLM System Integration', ->
       # Each should have unique conversation ID
       conversationIds = results.map((r) -> r.conversationId)
       uniqueIds = new Set(conversationIds)
-      expect(uniqueIds.size).toBe(5)
+      assert.equal uniqueIds.size, 5
 
     it 'should handle rapid mode switching', ->
       modes = ['parallel', 'sequential', 'debate', 'synthesis', 'handoff']
@@ -383,4 +383,4 @@ describe 'Dual LLM System Integration', ->
       # All modes should work
       expect(results).toHaveLength(5)
       results.forEach (result, i) ->
-        expect(result.mode).toBe(modes[i])
+        assert.equal result.mode, modes[i]

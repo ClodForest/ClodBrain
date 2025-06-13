@@ -1,189 +1,152 @@
-# Test setup and utilities
-{ vi } = require 'vitest'
+# Test setup and utilities (CommonJS)
+{ mock } = require 'node:test'
 
-# Common test utilities
-module.exports = {
-  # Create mock Ollama response
-  createMockOllamaResponse: (content) ->
-    {
-      data: {
-        response: content
-        model: 'test-model'
-        created_at: new Date().toISOString()
-        done: true
+# Helper to add mockResolvedValue to mock functions
+exports.createMockFn = (name = 'mockFn') ->
+  fn = mock.fn()
+
+  # Add helper methods that mimic Vitest/Jest
+  fn.mockResolvedValue = (value) ->
+    fn.mock.mockImplementation -> Promise.resolve(value)
+    fn
+
+  fn.mockRejectedValue = (error) ->
+    fn.mock.mockImplementation -> Promise.reject(error)
+    fn
+
+  fn.mockReturnValue = (value) ->
+    fn.mock.mockImplementation -> value
+    fn
+
+  fn.mockImplementation = (impl) ->
+    fn.mock.mockImplementation impl
+    fn
+
+  fn.mockReset = ->
+    fn.mock.resetCalls()
+    fn
+
+  fn
+
+# Create mock Ollama response
+exports.createMockOllamaResponse = (content) ->
+  {
+    data: {
+      response: content
+      model: 'test-model'
+      created_at: new Date().toISOString()
+      done: true
+    }
+  }
+
+# Create mock Neo4j driver
+exports.createMockNeo4jDriver = ->
+  sessions = []
+
+  mockSession = {
+    run: mock.fn()
+    close: mock.fn()
+  }
+
+  # Set up default resolved values
+  mockSession.run.mock.mockImplementation ->
+    Promise.resolve {
+      records: []
+      summary: {
+        counters: {}
+        resultAvailableAfter: 1
+        resultConsumedAfter: 2
       }
     }
 
-  # Create mock Neo4j driver
-  createMockNeo4jDriver: ->
-    sessions = []
+  mockSession.close.mock.mockImplementation ->
+    Promise.resolve undefined
 
-    mockSession = {
-      run: vi.fn().mockResolvedValue({
-        records: []
-        summary: {
-          counters: {}
-          resultAvailableAfter: 1
-          resultConsumedAfter: 2
-        }
-      })
-      close: vi.fn().mockResolvedValue(undefined)
+  driver = {
+    session: mock.fn()
+    close: mock.fn()
+    getSessions: -> sessions
+  }
+
+  driver.session.mock.mockImplementation ->
+    sessions.push(mockSession)
+    mockSession
+
+  driver
+
+# Create mock Neo4j tool
+exports.createMockNeo4jTool = ->
+  tool = {
+    connect: mock.fn()
+    executeQuery: mock.fn()
+    naturalLanguageQuery: mock.fn()
+    addKnowledge: mock.fn()
+    generateSchema: mock.fn()
+    getStats: mock.fn()
+  }
+
+  # Set default implementations
+  tool.connect.mock.mockImplementation -> Promise.resolve(true)
+  tool.executeQuery.mock.mockImplementation -> Promise.resolve({ records: [], summary: {} })
+  tool.naturalLanguageQuery.mock.mockImplementation -> Promise.resolve({ records: [] })
+  tool.addKnowledge.mock.mockImplementation -> Promise.resolve(undefined)
+  tool.generateSchema.mock.mockImplementation -> Promise.resolve({ nodeTypes: [], relationshipTypes: [] })
+  tool.getStats.mock.mockImplementation -> Promise.resolve({ totalNodes: 0, totalRelationships: 0, nodeTypes: {} })
+
+  tool
+
+# Create mock Axios
+exports.createMockAxios = ->
+  axios = {
+    post: mock.fn()
+    get: mock.fn()
+    _reset: ->
+      @post.mock.resetCalls()
+      @get.mock.resetCalls()
+  }
+  axios
+
+# Wait for promises
+exports.waitForPromises = (timeout = 100) ->
+  new Promise (resolve) ->
+    setTimeout resolve, timeout
+
+# Test configuration
+exports.createTestConfig = (overrides = {}) ->
+  {
+    alpha: {
+      model: 'test-alpha'
+      role: 'analytical'
+      personality: 'test-analytical'
+      system_prompt: 'Test alpha prompt'
+      temperature: 0.3
+      max_tokens: 100
+      top_p: 0.9
+      ...(overrides.alpha || {})
     }
-
-    driver = {
-      session: vi.fn().mockImplementation(->
-        sessions.push(mockSession)
-        mockSession
-      )
-      close: vi.fn().mockResolvedValue(undefined)
-      getSessions: -> sessions
+    beta: {
+      model: 'test-beta'
+      role: 'creative'
+      personality: 'test-creative'
+      system_prompt: 'Test beta prompt'
+      temperature: 0.7
+      max_tokens: 100
+      top_p: 0.95
+      ...(overrides.beta || {})
     }
-
-    driver
-
-  # Create mock Neo4j tool
-  createMockNeo4jTool: ->
-    {
-      connect: vi.fn().mockResolvedValue(true)
-      executeQuery: vi.fn().mockResolvedValue({
-        records: []
-        summary: {}
-      })
-      naturalLanguageQuery: vi.fn().mockResolvedValue({
-        records: []
-      })
-      addKnowledge: vi.fn().mockResolvedValue(undefined)
-      generateSchema: vi.fn().mockResolvedValue({
-        nodeTypes: []
-        relationshipTypes: []
-      })
-      getStats: vi.fn().mockResolvedValue({
-        totalNodes: 0
-        totalRelationships: 0
-        nodeTypes: {}
-      })
-    }
-
-  # Create mock Axios for Ollama
-  createMockAxios: ->
-    axios = {
-      post: vi.fn()
-      get: vi.fn()
-      _reset: ->
-        @post.mockReset()
-        @get.mockReset()
-    }
-    axios
-
-  # Wait for promises with timeout
-  waitForPromises: (timeout = 100) ->
-    new Promise (resolve) ->
-      setTimeout resolve, timeout
-
-  # Create test message
-  createTestMessage: (content = 'Test message', extras = {}) ->
-    {
-      content: content
-      timestamp: new Date().toISOString()
-      sender: 'user'
-      ...extras
-    }
-
-  # Assert communication structure
-  assertCommunication: (comm, expected) ->
-    expect(comm).toMatchObject({
-      type: expected.type
-      timestamp: expect.any(Number)
-      content: expect.any(String)
-    })
-
-    if expected.from
-      expect(comm.from).toBe(expected.from)
-    if expected.to
-      expect(comm.to).toBe(expected.to)
-
-  # Create test config
-  createTestConfig: (overrides = {}) ->
-    {
-      alpha: {
-        model: 'test-alpha'
-        role: 'analytical'
-        personality: 'test-analytical'
-        system_prompt: 'Test alpha prompt'
-        temperature: 0.3
-        max_tokens: 100
-        top_p: 0.9
-        ...overrides.alpha
-      }
-      beta: {
-        model: 'test-beta'
-        role: 'creative'
-        personality: 'test-creative'
-        system_prompt: 'Test beta prompt'
-        temperature: 0.7
-        max_tokens: 100
-        top_p: 0.95
-        ...overrides.beta
-      }
-      corpus_callosum: {
-        default_mode: 'parallel'
-        communication_timeout: 1000
-        max_iterations: 3
-        synthesis_threshold: 0.8
-        timeout: 1000
-        modes: {
-          parallel: { timeout: 500 }
-          sequential: { default_order: ['alpha', 'beta'], handoff_delay: 100 }
-          debate: { max_rounds: 2, convergence_threshold: 0.9 }
-          synthesis: { synthesis_model: 'alpha', show_individual: false }
-          handoff: { trigger_phrases: ['hand this over'] }
-        }
-        ...overrides.corpus_callosum
-      }
-    }
-
-  # Create test Ollama config
-  createTestOllamaConfig: ->
-    {
-      host: 'http://localhost:11434'
+    corpus_callosum: {
+      default_mode: 'parallel'
+      communication_timeout: 1000
+      max_iterations: 3
+      synthesis_threshold: 0.8
       timeout: 1000
-      defaultConfig: {
-        timeout: 1000
-        headers: { 'Content-Type': 'application/json' }
+      modes: {
+        parallel: { timeout: 500 }
+        sequential: { default_order: ['alpha', 'beta'], handoff_delay: 100 }
+        debate: { max_rounds: 2, convergence_threshold: 0.9 }
+        synthesis: { synthesis_model: 'alpha', show_individual: false }
+        handoff: { trigger_phrases: ['hand this over'] }
       }
+      ...(overrides.corpus_callosum || {})
     }
-
-  # Pattern matchers
-  isUUID: (str) ->
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str)
-
-  isProcessId: (str) ->
-    str.startsWith('proc_') and str.length > 15
-
-  isMessageId: (str) ->
-    str.startsWith('msg_') and str.length > 14
-
-  isConversationId: (str) ->
-    str.startsWith('conv_') and str.length > 15
-
-  # Socket.io mock
-  createMockSocket: ->
-    emittedEvents = []
-
-    socket = {
-      id: 'test-socket-123'
-      emit: vi.fn().mockImplementation((event, data) ->
-        emittedEvents.push({ event, data })
-      )
-      on: vi.fn()
-      getEmitted: (eventName = null) ->
-        if eventName
-          emittedEvents.filter((e) -> e.event is eventName)
-        else
-          emittedEvents
-      clearEmitted: ->
-        emittedEvents = []
-    }
-
-    socket
-}
+  }

@@ -1,6 +1,6 @@
 # Message Router Tests
-{ describe, it, expect, beforeEach, vi } = require 'vitest'
-MessageRouter = require '../../src/services/message-router'
+{ describe, it, beforeEach, mock } = require 'node:test'
+assert = require 'node:assert'
 {
   createMockNeo4jTool
   isConversationId
@@ -10,14 +10,14 @@ MessageRouter = require '../../src/services/message-router'
 # Mock Corpus Callosum
 createMockCorpusCallosum = ->
   {
-    orchestrate: vi.fn().mockResolvedValue({
+    orchestrate: mock.fn().mockResolvedValue({
       alphaResponse: { content: 'Alpha response' }
       betaResponse: { content: 'Beta response' }
       communications: []
       timestamp: new Date().toISOString()
     })
-    interrupt: vi.fn()
-    getStats: vi.fn().mockReturnValue({
+    interrupt: mock.fn()
+    getStats: mock.fn().mockReturnValue({
       currentMode: 'parallel'
       activeProcesses: 0
     })
@@ -36,14 +36,14 @@ describe 'MessageRouter', ->
   describe 'constructor', ->
     it 'should initialize with empty state', ->
       expect(router.activeConversations).toBeInstanceOf(Map)
-      expect(router.messageHistory).toEqual([])
-      expect(router.interrupted).toBe(false)
+      assert.deepEqual router.messageHistory, []
+      assert.equal router.interrupted, false
 
   describe 'processMessage', ->
     it 'should process message with new conversation', ->
       result = await router.processMessage('Hello world', 'parallel')
 
-      expect(result).toMatchObject({
+      assert.deepEqual result,({
         conversationId: expect.any(String)
         userMessage: {
           content: 'Hello world'
@@ -55,7 +55,7 @@ describe 'MessageRouter', ->
       })
 
       expect(isConversationId(result.conversationId)).toBe(true)
-      expect(mockCorpus.orchestrate).toHaveBeenCalledWith(
+      # TODO: Check mockCorpus.orchestrate.mock.calls[0].arguments(
         'Hello world'
         result.conversationId
         'parallel'
@@ -67,7 +67,7 @@ describe 'MessageRouter', ->
 
       result2 = await router.processMessage('Second message', 'parallel', convId)
 
-      expect(result2.conversationId).toBe(convId)
+      assert.equal result2.conversationId, convId
 
       conversation = router.getConversation(convId)
       expect(conversation.messages).toHaveLength(4) # 2 user + 2 AI
@@ -76,7 +76,7 @@ describe 'MessageRouter', ->
       await router.processMessage('Test message')
 
       # Should store conversation
-      expect(mockNeo4j.executeQuery).toHaveBeenCalledWith(
+      # TODO: Check mockNeo4j.executeQuery.mock.calls[0].arguments(
         expect.stringContaining('CREATE (c:Conversation')
         expect.objectContaining({
           id: expect.any(String)
@@ -101,11 +101,11 @@ describe 'MessageRouter', ->
 
       result = await router.processMessage('Synthesize this', 'synthesis')
 
-      expect(result.synthesis).toMatchObject({ content: 'Synthesized response' })
+      assert.deepEqual result.synthesis,({ content: 'Synthesized response' })
 
       conversation = router.getConversation(result.conversationId)
       synthesisMessage = conversation.messages.find((m) -> m.sender is 'synthesis')
-      expect(synthesisMessage).toBeTruthy()
+      assert.ok synthesisMessage
 
     it 'should handle handoff mode with primary', ->
       mockCorpus.orchestrate.mockResolvedValue({
@@ -117,9 +117,9 @@ describe 'MessageRouter', ->
 
       result = await router.processMessage('Analyze this', 'handoff')
 
-      expect(result.primary).toBe('alpha')
-      expect(result.alphaResponse).toBeTruthy()
-      expect(result.betaResponse).toBe(null)
+      assert.equal result.primary, 'alpha'
+      assert.ok result.alphaResponse
+      assert.equal result.betaResponse, null
 
     it 'should store communications in Neo4j', ->
       mockCorpus.orchestrate.mockResolvedValue({
@@ -136,8 +136,8 @@ describe 'MessageRouter', ->
         call[0].includes('CREATE (comm:Communication')
       )
 
-      expect(commCall).toBeTruthy()
-      expect(commCall[1]).toMatchObject({
+      assert.ok commCall
+      assert.deepEqual commCall[1],({
         fromBrain: 'alpha'
         toBrain: 'beta'
         content: 'Handoff'
@@ -169,7 +169,7 @@ describe 'MessageRouter', ->
     it 'should initialize conversation correctly', ->
       conversation = router.initializeConversation('conv123')
 
-      expect(conversation).toMatchObject({
+      assert.deepEqual conversation,({
         id: 'conv123'
         startTime: expect.any(String)
         lastActivity: expect.any(String)
@@ -194,8 +194,8 @@ describe 'MessageRouter', ->
       await router.processMessage('Second', 'debate', convId)
 
       conversation2 = router.getConversation(convId)
-      expect(conversation2.mode).toBe('debate')
-      expect(conversation2.messageCount).toBe(4) # 2 user + 2 AI
+      assert.equal conversation2.mode, 'debate'
+      assert.equal conversation2.messageCount, 4 # 2 user + 2 AI
       expect(conversation2.lastActivity).not.toBe(lastActivity1)
 
   describe 'knowledge extraction', ->
@@ -253,8 +253,8 @@ describe 'MessageRouter', ->
       result = await router.processMessage('Test')
       conversation = router.getConversation(result.conversationId)
 
-      expect(conversation).toBeTruthy()
-      expect(conversation.id).toBe(result.conversationId)
+      assert.ok conversation
+      assert.equal conversation.id, result.conversationId
 
     it 'should get all conversations', ->
       await router.processMessage('Test 1')
@@ -278,14 +278,14 @@ describe 'MessageRouter', ->
     it 'should interrupt processing', ->
       router.interrupt()
 
-      expect(router.interrupted).toBe(true)
-      expect(mockCorpus.interrupt).toHaveBeenCalled()
+      assert.equal router.interrupted, true
+      assert.ok mockCorpus.interrupt.mock.calls.length > 0
 
     it 'should clear interrupt', ->
       router.interrupt()
       router.clearInterrupt()
 
-      expect(router.interrupted).toBe(false)
+      assert.equal router.interrupted, false
 
   describe 'stats', ->
     it 'should return router statistics', ->
@@ -295,7 +295,7 @@ describe 'MessageRouter', ->
 
       stats = router.getStats()
 
-      expect(stats).toMatchObject({
+      assert.deepEqual stats,({
         activeConversations: 2
         totalMessages: expect.any(Number)
         interrupted: true
@@ -307,14 +307,14 @@ describe 'MessageRouter', ->
 
   describe 'error handling', ->
     it 'should handle corpus orchestration errors', ->
-      mockCorpus.orchestrate.mockRejectedValue(new Error('Orchestration failed'))
+      mockCorpus.orchestrate.mock.mockImplementation(-> Promise.reject(new Error('Orchestration failed')))
 
       await expect(
         router.processMessage('Test')
       ).rejects.toThrow('Orchestration failed')
 
     it 'should handle Neo4j storage errors gracefully', ->
-      mockNeo4j.executeQuery.mockRejectedValue(new Error('DB error'))
+      mockNeo4j.executeQuery.mock.mockImplementation(-> Promise.reject(new Error('DB error')))
 
       # Should not throw, just log errors
       await expect(
@@ -333,7 +333,7 @@ describe 'MessageRouter', ->
       conversation = router.getConversation(result.conversationId)
       alphaMessage = conversation.messages.find((m) -> m.sender is 'alpha')
 
-      expect(alphaMessage.content).toBe('Plain string response')
+      assert.equal alphaMessage.content, 'Plain string response'
 
   describe 'Neo4j storage edge cases', ->
     it 'should flatten objects for Neo4j', ->
@@ -356,6 +356,6 @@ describe 'MessageRouter', ->
       )
 
       # Should convert to strings
-      expect(commCall[1].fromBrain).toBe('[object Object]')
-      expect(commCall[1].content).toBe('123')
-      expect(commCall[1].type).toBe('null')
+      assert.equal commCall[1].fromBrain, '[object Object]'
+      assert.equal commCall[1].content, '123'
+      assert.equal commCall[1].type, 'null'

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test runner script for ClodBrain
+# Test runner script for ClodBrain using Node.js built-in test runner
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -9,68 +9,39 @@ BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🧠 ClodBrain Test Suite 🧠${NC}"
+echo -e "${BLUE}🧠 ClodBrain Test Suite (Node.js Test Runner) 🧠${NC}"
 echo ""
 
-# Check if running in CI or local
-if [ "$CI" = "true" ]; then
-    echo -e "${YELLOW}Running in CI mode${NC}"
-else
-    echo -e "${YELLOW}Running in local mode${NC}"
-fi
-
-# Install dependencies if needed
-if [ ! -d "node_modules" ]; then
-    echo -e "${BLUE}Installing dependencies...${NC}"
-    npm install
-fi
+# Common test command parts
+NODE_CMD="coffee --nodejs"
+TEST_FILES="t/**/*.test.coffee"
 
 # Run different test suites based on arguments
 case "$1" in
     "watch")
         echo -e "${BLUE}Starting test watcher...${NC}"
-        npm run test:watch
+        $NODE_CMD "--test --watch" $TEST_FILES
         ;;
 
     "coverage")
         echo -e "${BLUE}Running tests with coverage...${NC}"
-        npm run test:coverage
-        echo -e "${GREEN}Coverage report generated in ./coverage${NC}"
-        ;;
-
-    "ui")
-        echo -e "${BLUE}Starting Vitest UI...${NC}"
-        npm run test:ui
+        $NODE_CMD "--experimental-test-coverage --test" $TEST_FILES
         ;;
 
     "unit")
         echo -e "${BLUE}Running unit tests only...${NC}"
-        npx vitest run test/services/
+        $NODE_CMD "--test" t/services/*.test.coffee
         ;;
 
     "integration")
         echo -e "${BLUE}Running integration tests only...${NC}"
-        npx vitest run test/integration/
+        $NODE_CMD "--test" t/integration/*.test.coffee
         ;;
 
     "quick")
         echo -e "${BLUE}Running quick smoke tests...${NC}"
-        npx vitest run --reporter=dot --bail 3
-        ;;
-
-    "ci")
-        echo -e "${BLUE}Running CI test suite...${NC}"
-        # Run tests with coverage and fail on low coverage
-        npx vitest run --coverage --reporter=json --reporter=default
-
-        # Check coverage thresholds
-        COVERAGE_RESULT=$?
-        if [ $COVERAGE_RESULT -ne 0 ]; then
-            echo -e "${RED}Tests failed!${NC}"
-            exit 1
-        fi
-
-        echo -e "${GREEN}All tests passed!${NC}"
+        # Run with concurrency for speed
+        $NODE_CMD "--test --test-concurrency=4" $TEST_FILES
         ;;
 
     "specific")
@@ -80,17 +51,28 @@ case "$1" in
             exit 1
         fi
         echo -e "${BLUE}Running tests matching: $2${NC}"
-        npx vitest run "$2"
+        $NODE_CMD "--test" "t/**/*$2*.test.coffee"
+        ;;
+
+    "only")
+        echo -e "${BLUE}Running tests marked with 'only'...${NC}"
+        $NODE_CMD "--test --test-only" $TEST_FILES
+        ;;
+
+    "reporter")
+        REPORTER="${2:-spec}"
+        echo -e "${BLUE}Running tests with $REPORTER reporter...${NC}"
+        $NODE_CMD "--test --test-reporter=$REPORTER" $TEST_FILES
         ;;
 
     "debug")
         echo -e "${BLUE}Running tests in debug mode...${NC}"
-        NODE_OPTIONS='--inspect-brk' npx vitest run --no-threads
+        $NODE_CMD "--inspect-brk --test" $TEST_FILES
         ;;
 
     *)
         echo -e "${BLUE}Running all tests...${NC}"
-        npm test
+        $NODE_CMD "--test" $TEST_FILES
         ;;
 esac
 

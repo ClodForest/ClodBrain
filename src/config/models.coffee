@@ -1,5 +1,5 @@
 # Model configuration for Alpha and Beta LLMs (ESM)
-export default {
+module.exports = {
   alpha:
     model: process.env.ALPHA_MODEL || 'llama3.1:8b-instruct-q4_K_M'
     role: 'analytical'

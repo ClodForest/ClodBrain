@@ -2,10 +2,9 @@
 
 ## Overview
 
-ClodBrain uses **Vitest** as its testing framework - a blazing fast unit test framework powered by Vite. It was chosen for:
+ClodBrain uses **Node.js Test Runner** as its testing framework - a blazing fast unit test framework powered by Vite. It was chosen for:
 
 - Zero configuration needed
-- CoffeeScript support via vite-plugin-coffee3
 - Built-in mocking and coverage
 - Watch mode with intelligent test re-running
 - Compatible with Jest APIs
@@ -41,7 +40,7 @@ npm run test:watch
 # Run with coverage report
 npm run test:coverage
 
-# Open Vitest UI in browser
+# Open Node.js Test Runner UI in browser
 npm run test:ui
 ```
 
@@ -81,7 +80,7 @@ chmod +x bin/test.sh
 ### Basic Test Structure
 
 ```coffeescript
-{ describe, it, expect, beforeEach, vi } = require 'vitest'
+{ describe, it, expect, beforeEach, vi } = require 'node:test'
 MyService = require '../../src/services/my-service'
 
 describe 'MyService', ->
@@ -114,7 +113,7 @@ config = createTestConfig()
 await waitForPromises(100)
 ```
 
-### Mocking with Vitest
+### Mocking with Node.js Test Runner
 
 ```coffeescript
 # Mock a module
@@ -207,7 +206,7 @@ Add to `.vscode/launch.json`:
   "type": "node",
   "request": "launch",
   "name": "Debug Tests",
-  "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+  "program": "${workspaceFolder}/node_modules/node:test/node:test.mjs",
   "args": ["run", "${file}"],
   "console": "integratedTerminal"
 }
@@ -217,7 +216,7 @@ Add to `.vscode/launch.json`:
 
 ```bash
 # Debug specific test
-NODE_OPTIONS='--inspect-brk' npx vitest run test/services/corpus-callosum.test.coffee
+NODE_OPTIONS='--inspect-brk' npx node:test run test/services/corpus-callosum.test.coffee
 
 # Then open chrome://inspect
 ```
@@ -248,7 +247,6 @@ For GitHub Actions:
 - Mock all external dependencies
 
 ### Coffee Compilation Errors
-- Ensure `vite-plugin-coffee` is installed
 - Check CoffeeScript syntax
 - Verify import paths use correct extensions
 

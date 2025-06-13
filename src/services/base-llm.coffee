@@ -1,5 +1,5 @@
 # Base LLM Service - Common functionality for Alpha and Beta (ESM)
-import axios from 'axios'
+axios = require 'axios'
 
 class BaseLLM
   constructor: (@config, @ollamaConfig, @neo4jTool = null) ->
@@ -283,4 +283,4 @@ class BaseLLM
         error: error.message
       }
 
-export default BaseLLM
+module.exports = BaseLLM

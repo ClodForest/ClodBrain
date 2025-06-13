@@ -1,22 +1,22 @@
 # Main Express application (ESM)
-import express from 'express'
-import http from 'http'
-import { Server } from 'socket.io'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import 'dotenv/config'
+express = require 'express'
+http = require 'http'
+{ Server } = require 'socket.io'
+path = require 'path'
+{ fileURLToPath } = require 'url'
+require 'dotenv/config'
 
 # Import our services
-import LLMAlpha from './services/llm-alpha.js'
-import LLMBeta from './services/llm-beta.js'
-import CorpusCallosum from './services/corpus-callosum.js'
-import Neo4jTool from './services/neo4j-tool.js'
-import MessageRouter from './services/message-router.js'
+LLMAlpha = require './services/llm-alpha'
+LLMBeta = require './services/llm-beta'
+CorpusCallosum = require './services/corpus-callosum'
+Neo4jTool = require './services/neo4j-tool'
+MessageRouter = require './services/message-router'
 
 # Import configurations
-import databaseConfig from './config/database.js'
-import ollamaConfig from './config/ollama.js'
-import modelsConfig from './config/models.js'
+databaseConfig = require './config/database'
+ollamaConfig = require './config/ollama'
+modelsConfig = require './config/models'
 
 # ESM equivalent of __dirname
 __filename = fileURLToPath(import.meta.url)
@@ -314,4 +314,4 @@ startApp().catch (error) ->
   console.error 'Failed to start ClodBrain:', error
   process.exit 1
 
-export default DualLLMApp
+module.exports = DualLLMApp

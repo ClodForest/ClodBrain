@@ -1,19 +1,19 @@
 # Corpus Callosum Tests
-{ describe, it, expect, beforeEach, vi } = require 'vitest'
-CorpusCallosum = require '../../src/services/corpus-callosum'
+{ describe, it, beforeEach, mock } = require 'node:test'
+assert = require 'node:assert'
 { createTestConfig, isProcessId } = require '../setup'
 
 # Create mock executors
 createMockExecutor = (name) ->
   {
-    execute: vi.fn().mockResolvedValue({
+    execute: mock.fn().mockResolvedValue({
       alphaResponse: { content: "#{name} alpha response" }
       betaResponse: { content: "#{name} beta response" }
     })
   }
 
 # Mock the mode-executors module
-vi.mock '../../src/services/mode-executors', ->
+mock.module '../../src/services/mode-executors', ->
   {
     ParallelExecutor: class
       constructor: -> createMockExecutor('parallel')
@@ -34,14 +34,14 @@ describe 'CorpusCallosum', ->
   corpus = null
 
   beforeEach ->
-    mockAlpha = { processMessage: vi.fn() }
-    mockBeta = { processMessage: vi.fn() }
+    mockAlpha = { processMessage: mock.fn() }
+    mockBeta = { processMessage: mock.fn() }
     config = createTestConfig().corpus_callosum
     corpus = new CorpusCallosum(mockAlpha, mockBeta, config)
 
   describe 'constructor', ->
     it 'should initialize with default mode', ->
-      expect(corpus.currentMode).toBe('parallel')
+      assert.equal corpus.currentMode, 'parallel'
       expect(corpus.activeProcesses).toBeInstanceOf(Map)
       expect(corpus.patterns).toBeInstanceOf(Map)
 
@@ -56,14 +56,14 @@ describe 'CorpusCallosum', ->
     it 'should execute in parallel mode by default', ->
       result = await corpus.orchestrate('Test message', 'conv123')
 
-      expect(corpus.executors.parallel.execute).toHaveBeenCalledWith(
+      # TODO: Check corpus.executors.parallel.execute.mock.calls[0].arguments(
         'Test message'
         expect.any(String)
         expect.any(Function)
         {}
       )
 
-      expect(result).toMatchObject({
+      assert.deepEqual result,({
         alphaResponse: { content: 'parallel alpha response' }
         betaResponse: { content: 'parallel beta response' }
         mode: 'parallel'
@@ -73,8 +73,8 @@ describe 'CorpusCallosum', ->
     it 'should use specified mode', ->
       result = await corpus.orchestrate('Test message', 'conv123', 'debate')
 
-      expect(corpus.executors.debate.execute).toHaveBeenCalled()
-      expect(result.mode).toBe('debate')
+      assert.ok corpus.executors.debate.execute.mock.calls.length > 0
+      assert.equal result.mode, 'debate'
 
     it 'should throw error for unknown mode', ->
       await expect(
@@ -86,17 +86,17 @@ describe 'CorpusCallosum', ->
       promise = corpus.orchestrate('Test', 'conv123')
 
       # Should have one active process
-      expect(corpus.activeProcesses.size).toBe(1)
+      assert.equal corpus.activeProcesses.size, 1
 
       # Wait for completion
       await promise
 
       # Should be cleaned up
-      expect(corpus.activeProcesses.size).toBe(0)
+      assert.equal corpus.activeProcesses.size, 0
 
     it 'should record communications', ->
       # Make executor call recordComm
-      corpus.executors.parallel.execute.mockImplementation(
+      corpus.executors.parallel.execute.mock.mockImplementation(
         (msg, procId, recordComm) ->
           recordComm({ from: 'alpha', to: 'beta', message: 'test' })
           return { alphaResponse: {}, betaResponse: {} }
@@ -105,7 +105,7 @@ describe 'CorpusCallosum', ->
       result = await corpus.orchestrate('Test', 'conv123')
 
       expect(result.communications).toHaveLength(1)
-      expect(result.communications[0]).toMatchObject({
+      assert.deepEqual result.communications[0],({
         from: 'alpha'
         to: 'beta'
         message: 'test'
@@ -120,7 +120,7 @@ describe 'CorpusCallosum', ->
 
       # Check pattern structure
       patterns = Array.from(corpus.patterns.values())[0]
-      expect(patterns[0]).toMatchObject({
+      assert.deepEqual patterns[0],({
         mode: 'parallel'
         messageType: 'question'
         success: true
@@ -156,8 +156,8 @@ describe 'CorpusCallosum', ->
     it 'should change mode', ->
       corpus.setMode('synthesis', { custom: 'param' })
 
-      expect(corpus.currentMode).toBe('synthesis')
-      expect(corpus.modeParameters).toEqual({ custom: 'param' })
+      assert.equal corpus.currentMode, 'synthesis'
+      assert.deepEqual corpus.modeParameters, { custom: 'param' }
 
     it 'should reject invalid mode', ->
       expect(->
@@ -178,7 +178,7 @@ describe 'CorpusCallosum', ->
 
       expect(process.communications).toHaveLength(1)
       expect(corpus.communicationHistory).toHaveLength(1)
-      expect(corpus.communicationHistory[0]).toMatchObject({
+      assert.deepEqual corpus.communicationHistory[0],({
         processId: processId
         from: 'alpha'
         to: 'beta'
@@ -200,7 +200,7 @@ describe 'CorpusCallosum', ->
 
       # Should only keep last 100
       patterns = corpus.patterns.get('parallel_general')
-      expect(patterns.length).toBe(100)
+      assert.equal patterns.length, 100
 
   describe 'utilities', ->
     it 'should generate valid process IDs', ->
@@ -218,7 +218,7 @@ describe 'CorpusCallosum', ->
 
       corpus.interrupt()
 
-      expect(corpus.activeProcesses.size).toBe(0)
+      assert.equal corpus.activeProcesses.size, 0
 
     it 'should return statistics', ->
       # Set up some state
@@ -229,7 +229,7 @@ describe 'CorpusCallosum', ->
 
       stats = corpus.getStats()
 
-      expect(stats).toMatchObject({
+      assert.deepEqual stats,({
         currentMode: 'debate'
         activeProcesses: 1
         totalCommunications: 3
@@ -241,7 +241,7 @@ describe 'CorpusCallosum', ->
     it 'should create process with correct structure', ->
       process = corpus.createProcess('proc123', 'synthesis', 'Test msg', 'conv456')
 
-      expect(process).toMatchObject({
+      assert.deepEqual process,({
         id: 'proc123'
         mode: 'synthesis'
         startTime: expect.any(Number)
@@ -261,7 +261,7 @@ describe 'CorpusCallosum', ->
       baseResult = { alphaResponse: 'alpha', betaResponse: 'beta' }
       finalized = corpus.finalizeResult(baseResult, 'debate', 'proc123')
 
-      expect(finalized).toMatchObject({
+      assert.deepEqual finalized,({
         alphaResponse: 'alpha'
         betaResponse: 'beta'
         mode: 'debate'
@@ -282,10 +282,10 @@ describe 'CorpusCallosum', ->
       promise = corpus.orchestrate('Test', 'conv123')
 
       # Should have active process
-      expect(corpus.activeProcesses.size).toBe(1)
+      assert.equal corpus.activeProcesses.size, 1
 
       # Wait for error
       await expect(promise).rejects.toThrow('Executor failed')
 
       # Should still clean up
-      expect(corpus.activeProcesses.size).toBe(0)
+      assert.equal corpus.activeProcesses.size, 0

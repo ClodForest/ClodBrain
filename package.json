@@ -8,10 +8,11 @@
     "start": "coffee src/app.coffee",
     "neo4j:setup": "coffee bin/seed-neo4j.coffee",
     "docker:neo4j": "docker run --name neo4j -p7474:7474 -p7687:7687 -d -e NEO4J_AUTH=neo4j/password neo4j:latest",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
-    "test:coverage": "vitest --coverage",
-    "test:ui": "vitest --ui"
+    "test": "node -r coffeescript/register --test t/services/*.test.coffee t/integration/*.test.coffee",
+    "test:unit": "node -r coffeescript/register --test t/services/*.test.coffee",
+    "test:integration": "node -r coffeescript/register --test t/integration/*.test.coffee",
+    "test:watch": "node -r coffeescript/register --test --watch t/services/*.test.coffee t/integration/*.test.coffee",
+    "test:coverage": "node -r coffeescript/register --experimental-test-coverage --test t/services/*.test.coffee t/integration/*.test.coffee"
   },
   "keywords": [
     "llm",
@@ -32,11 +33,7 @@
     "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "vitest": "^1.6.0",
-    "@vitest/ui": "^1.6.0",
-    "@vitest/coverage-v8": "^1.6.0",
-    "vite-plugin-coffee3": "^1.0.0"
+    "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=24.2.0"
