@@ -1,177 +1,118 @@
-# Message Router Tests - The Simplest Way That Could Possibly Work
+# Message Router Tests - Simple and Real
 { describe, it, beforeEach, mock } = require 'node:test'
 assert = require 'node:assert'
-
-# Simple test implementation of MessageRouter
-class TestMessageRouter
-  constructor: (@alpha, @beta, @corpus, @config = {}) ->
-    @messageHistory = []
-    @conversationContexts = new Map()
-    @activeRequests = new Map()
-    @systemPrompt = @config.system_prompt || 'Default system prompt'
-    @contextWindow = @config.context_window || 10
-
-  route: (message, conversationId = 'default', mode = null) ->
-    # Store message
-    @messageHistory.push({
-      message,
-      conversationId,
-      timestamp: Date.now()
-    })
-
-    # Get or create context
-    context = @getOrCreateContext(conversationId)
-    context.messages.push({ role: 'user', content: message })
-
-    # Route through corpus
-    try
-      result = await @corpus.orchestrate(message, conversationId, mode)
-
-      # Add responses to context
-      if result.alphaResponse
-        context.messages.push({ role: 'assistant', content: result.alphaResponse.content, source: 'alpha' })
-      if result.betaResponse
-        context.messages.push({ role: 'assistant', content: result.betaResponse.content, source: 'beta' })
-
-      # Trim context if needed
-      @trimContext(context)
-
-      return result
-    catch error
-      # Simple error handling
-      throw error
-
-  getOrCreateContext: (conversationId) ->
-    unless @conversationContexts.has(conversationId)
-      @conversationContexts.set(conversationId, {
-        id: conversationId,
-        messages: [],
-        createdAt: Date.now()
-      })
-    @conversationContexts.get(conversationId)
-
-  trimContext: (context) ->
-    # Keep only last N messages
-    if context.messages.length > @contextWindow
-      context.messages = context.messages.slice(-@contextWindow)
-
-  getConversationHistory: (conversationId) ->
-    context = @conversationContexts.get(conversationId)
-    context?.messages || []
-
-  clearConversation: (conversationId) ->
-    @conversationContexts.delete(conversationId)
-
-  getStats: ->
-    {
-      totalMessages: @messageHistory.length,
-      activeConversations: @conversationContexts.size,
-      oldestConversation: Math.min(...Array.from(@conversationContexts.values()).map(c => c.createdAt))
-    }
+MessageRouter = require '../../src/services/message-router'
 
 describe 'MessageRouter', ->
   router = null
-  mockAlpha = null
-  mockBeta = null
   mockCorpus = null
+  mockNeo4j = null
 
   beforeEach ->
-    mockAlpha = { processMessage: mock.fn() }
-    mockBeta = { processMessage: mock.fn() }
+    # Minimal mocks for dependencies
     mockCorpus = {
       orchestrate: mock.fn (message, convId, mode) ->
         Promise.resolve({
-          alphaResponse: { content: "Alpha: #{message}" },
-          betaResponse: { content: "Beta: #{message}" },
-          mode: mode || 'parallel',
+          alphaResponse: { content: "Alpha says: #{message}" }
+          betaResponse: { content: "Beta says: #{message}" }
           timestamp: new Date().toISOString()
         })
+      getStats: mock.fn -> { mode: 'parallel' }
+      interrupt: mock.fn()
     }
 
-    config = {
-      system_prompt: 'Test prompt',
-      context_window: 5
+    mockNeo4j = {
+      executeQuery: mock.fn -> Promise.resolve({ records: [] })
     }
 
-    router = new TestMessageRouter(mockAlpha, mockBeta, mockCorpus, config)
+    router = new MessageRouter(mockCorpus, mockNeo4j)
 
-  describe 'basic routing', ->
-    it 'should route message through corpus', ->
-      result = await router.route('Hello', 'conv1')
+  describe 'processMessage', ->
+    it 'should process a message and return result', ->
+      result = await router.processMessage('Hello world')
 
-      assert.equal mockCorpus.orchestrate.mock.calls.length, 1
-      assert.equal mockCorpus.orchestrate.mock.calls[0].arguments[0], 'Hello'
-      assert.equal mockCorpus.orchestrate.mock.calls[0].arguments[1], 'conv1'
+      assert.ok result
+      assert.ok result.conversationId
+      assert.ok result.userMessage
+      assert.equal result.userMessage.content, 'Hello world'
+      assert.equal result.alphaResponse.content, 'Alpha says: Hello world'
+      assert.equal result.betaResponse.content, 'Beta says: Hello world'
 
-      assert.equal result.alphaResponse.content, 'Alpha: Hello'
-      assert.equal result.betaResponse.content, 'Beta: Hello'
+    it 'should call corpus with message and mode', ->
+      await router.processMessage('Test', 'debate')
 
-    it 'should store message in history', ->
-      await router.route('Test message', 'conv1')
+      # Check corpus was called correctly
+      calls = mockCorpus.orchestrate.mock.calls
+      assert.equal calls.length, 1
+      assert.equal calls[0].arguments[0], 'Test'
+      assert.equal calls[0].arguments[2], 'debate'
 
-      assert.equal router.messageHistory.length, 1
-      assert.equal router.messageHistory[0].message, 'Test message'
-      assert.equal router.messageHistory[0].conversationId, 'conv1'
-      assert.ok router.messageHistory[0].timestamp
+    it 'should use provided conversation ID', ->
+      result = await router.processMessage('Hi', 'parallel', 'my-conv-123')
 
-    it 'should use specified mode', ->
-      await router.route('Message', 'conv1', 'debate')
+      assert.equal result.conversationId, 'my-conv-123'
+      assert.equal result.userMessage.conversationId, 'my-conv-123'
 
-      assert.equal mockCorpus.orchestrate.mock.calls[0].arguments[2], 'debate'
+  describe 'conversation management', ->
+    it 'should track active conversations', ->
+      await router.processMessage('First', 'parallel', 'conv1')
+      await router.processMessage('Second', 'parallel', 'conv2')
 
-  describe 'conversation context', ->
-    it 'should create context for new conversation', ->
-      await router.route('First message', 'new-conv')
+      assert.equal router.getAllConversations().length, 2
 
-      context = router.getOrCreateContext('new-conv')
-      assert.ok context
-      assert.equal context.id, 'new-conv'
-      assert.ok context.createdAt
-      assert.ok Array.isArray(context.messages)
+      conv1 = router.getConversation('conv1')
+      assert.ok conv1
+      assert.equal conv1.id, 'conv1'
+      assert.ok conv1.messages.length > 0
 
-    it 'should append messages to context', ->
-      await router.route('Message 1', 'conv1')
-      await router.route('Message 2', 'conv1')
+    it 'should add messages to existing conversation', ->
+      await router.processMessage('First', 'parallel', 'conv1')
+      await router.processMessage('Second', 'parallel', 'conv1')
 
-      history = router.getConversationHistory('conv1')
-      assert.equal history.length, 6  # 2 user + 4 assistant (2 per request)
+      conv = router.getConversation('conv1')
+      # Should have: 2 user messages + 2 alpha + 2 beta = 6 messages
+      assert.equal conv.messages.length, 6
+
+  describe 'message history', ->
+    it 'should track message history', ->
+      await router.processMessage('Message 1')
+      await router.processMessage('Message 2')
+
+      history = router.getMessageHistory()
+      # Each message creates 3 entries: user, alpha, beta
+      assert.equal history.length, 6
       assert.equal history[0].content, 'Message 1'
-      assert.equal history[1].content, 'Alpha: Message 1'
-      assert.equal history[2].content, 'Beta: Message 1'
+      assert.equal history[0].sender, 'user'
 
-    it 'should trim context to window size', ->
-      # Send more messages than window size
+    it 'should respect history limit', ->
+      # Create many messages
       for i in [1..10]
-        await router.route("Message #{i}", 'conv1')
+        await router.processMessage("Message #{i}")
 
-      history = router.getConversationHistory('conv1')
-      assert.equal history.length, router.contextWindow
+      limitedHistory = router.getMessageHistory(5)
+      assert.equal limitedHistory.length, 5
 
-    it 'should clear conversation', ->
-      await router.route('Message', 'conv1')
-      router.clearConversation('conv1')
-
-      history = router.getConversationHistory('conv1')
-      assert.deepEqual history, []
-
-  describe 'error handling', ->
-    it 'should propagate corpus errors', ->
-      mockCorpus.orchestrate = mock.fn -> Promise.reject(new Error('Corpus error'))
-
-      try
-        await router.route('Message', 'conv1')
-        assert.fail('Should have thrown')
-      catch error
-        assert.equal error.message, 'Corpus error'
-
-  describe 'statistics', ->
-    it 'should track basic stats', ->
-      await router.route('Msg 1', 'conv1')
-      await router.route('Msg 2', 'conv2')
-      await router.route('Msg 3', 'conv1')
+  describe 'stats', ->
+    it 'should return basic stats', ->
+      await router.processMessage('Test 1')
+      await router.processMessage('Test 2', 'parallel', 'conv2')
 
       stats = router.getStats()
 
-      assert.equal stats.totalMessages, 3
       assert.equal stats.activeConversations, 2
-      assert.ok stats.oldestConversation > 0
+      assert.ok stats.totalMessages > 0
+      assert.equal stats.interrupted, false
+      assert.ok stats.corpusStats
+
+  describe 'interrupt', ->
+    it 'should set interrupted flag and call corpus interrupt', ->
+      router.interrupt()
+
+      assert.equal router.getStats().interrupted, true
+      assert.equal mockCorpus.interrupt.mock.calls.length, 1
+
+    it 'should clear interrupt', ->
+      router.interrupt()
+      router.clearInterrupt()
+
+      assert.equal router.getStats().interrupted, false
