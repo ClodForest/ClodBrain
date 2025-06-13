@@ -55,7 +55,7 @@ describe 'MessageRouter', ->
       })
 
       expect(isConversationId(result.conversationId)).toBe(true)
-      # TODO: Check mockCorpus.orchestrate.mock.calls[0].arguments(
+      mockCorpus.orchestrate.mock.calls[0].arguments(
         'Hello world'
         result.conversationId
         'parallel'
@@ -76,7 +76,7 @@ describe 'MessageRouter', ->
       await router.processMessage('Test message')
 
       # Should store conversation
-      # TODO: Check mockNeo4j.executeQuery.mock.calls[0].arguments(
+      mockNeo4j.executeQuery.mock.calls[0].arguments(
         expect.stringContaining('CREATE (c:Conversation')
         expect.objectContaining({
           id: expect.any(String)

@@ -56,7 +56,7 @@ describe 'CorpusCallosum', ->
     it 'should execute in parallel mode by default', ->
       result = await corpus.orchestrate('Test message', 'conv123')
 
-      # TODO: Check corpus.executors.parallel.execute.mock.calls[0].arguments(
+      corpus.executors.parallel.execute.mock.calls[0].arguments(
         'Test message'
         expect.any(String)
         expect.any(Function)

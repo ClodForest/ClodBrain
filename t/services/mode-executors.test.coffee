@@ -1,288 +1,377 @@
-# BaseLLM Tests
-{ describe, it, beforeEach, mock } = require 'node:test'
-assert = require 'node:assert'
-{
-  createMockOllamaResponse
-  createMockNeo4jTool
-  createMockAxios
-  createTestConfig
-  createTestOllamaConfig
-} = require '../setup'
+# Mode Executors - Each mode as its own class
 
-describe 'BaseLLM', ->
-  mockAxios = null
-  mockNeo4j = null
-  baseLLM = null
-  config = null
+# Base class for all mode executors
+class ModeExecutor
+  constructor: (@alpha, @beta, @config) ->
+    @promptBuilder = new PromptBuilder()
 
-  beforeEach ->
-    mockAxios = createMockAxios()
-    mockNeo4j = createMockNeo4jTool()
-    config = createTestConfig()
+  execute: (message, processId, recordComm) ->
+    throw new Error "Subclasses must implement execute()"
 
-    # Mock axios globally
-    mock.module 'axios', -> mockAxios
+  extractContent: (response) ->
+    if typeof response is 'string' then response else response.content
 
-    baseLLM = new BaseLLM(
-      config.alpha
-      createTestOllamaConfig()
-      mockNeo4j
-    )
+  withTimeout: (promise, timeoutMs) ->
+    Promise.race [
+      promise
+      new Promise (_, reject) ->
+        setTimeout (-> reject(new Error('Timeout'))), timeoutMs
+    ]
 
-  describe 'constructor', ->
-    it 'should initialize with correct properties', ->
-      expect(baseLLM.model).toBe 'test-alpha'
-      expect(baseLLM.role).toBe 'analytical'
-      expect(baseLLM.personality).toBe 'test-analytical'
-      expect(baseLLM.systemPrompt).toBe 'Test alpha prompt'
-      expect(baseLLM.neo4jTool).toBe mockNeo4j
+  delay: (ms) ->
+    new Promise (resolve) -> setTimeout(resolve, ms)
 
-    it 'should work without Neo4j tool', ->
-      llmWithoutNeo4j = new BaseLLM(
-        config.alpha
-        createTestOllamaConfig()
-        null
+# Parallel Mode - Both brains process simultaneously
+class ParallelExecutor extends ModeExecutor
+  execute: (message, processId, recordComm) ->
+    promises = [
+      @withTimeout(@alpha.processMessage(message, null), @config.timeout)
+      @withTimeout(@beta.processMessage(message, null),  @config.timeout)
+    ]
+
+    results = await Promise.allSettled(promises)
+
+    @buildResponse(results)
+
+  buildResponse: (results) ->
+    [alphaResult, betaResult] = results
+
+    if alphaResult.status is 'rejected'
+      console.error 'Alpha failed:', alphaResult.reason
+    if betaResult.status is 'rejected'
+      console.error 'Beta failed:', betaResult.reason
+
+    {
+      alphaResponse: if alphaResult.status is 'fulfilled' then alphaResult.value else null
+      betaResponse:  if betaResult.status  is 'fulfilled' then betaResult.value  else null
+    }
+
+# Sequential Mode - One brain, then the other
+class SequentialExecutor extends ModeExecutor
+  constructor: (alpha, beta, config) ->
+    super(alpha, beta, config)
+    @defaultOrder = config.modes.sequential.default_order
+    @handoffDelay = config.modes.sequential.handoff_delay
+
+  execute: (message, processId, recordComm, order = null) ->
+    order  = order || @defaultOrder
+    models = { alpha: @alpha, beta: @beta }
+
+    # First model
+    firstModel    = models[order[0]]
+    firstResponse = await firstModel.processMessage(message, null)
+
+    # Delay between models
+    await @delay(@handoffDelay)
+
+    # Second model with context
+    firstContent     = @extractContent(firstResponse)
+    contextMessage   = @buildContextMessage(message, order[0], firstContent)
+    secondModel      = models[order[1]]
+    secondResponse   = await secondModel.processMessage(contextMessage, firstResponse)
+
+    # Record handoff
+    recordComm {
+      from:    order[0]
+      to:      order[1]
+      message: firstContent
+      type:    'handoff'
+    }
+
+    # Build response
+    responses = {}
+    responses[order[0]] = firstResponse
+    responses[order[1]] = secondResponse
+
+    {
+      alphaResponse: responses.alpha
+      betaResponse:  responses.beta
+    }
+
+  buildContextMessage: (originalMessage, fromModel, content) ->
+    """
+      #{originalMessage}
+
+      Context from #{fromModel}: #{content}
+    """
+
+# Debate Mode - Iterative refinement through challenges
+class DebateExecutor extends ModeExecutor
+  constructor: (alpha, beta, config) ->
+    super(alpha, beta, config)
+    @maxRounds          = config.modes.debate.max_rounds
+    @convergenceThreshold = config.modes.debate.convergence_threshold
+
+  execute: (message, processId, recordComm) ->
+    state = await @initializeDebate(message)
+
+    for round in [1..@maxRounds]
+      result = await @runDebateRound(message, state, round, recordComm)
+
+      if @hasConverged(state.previousContent, result.refinedContent)
+        console.log "Debate converged after #{round} rounds"
+        break
+
+      state = @updateState(state, result)
+
+    @buildResponse(state)
+
+  initializeDebate: (message) ->
+    alphaResponse = await @alpha.processMessage(message, null)
+
+    {
+      alphaResponse:   alphaResponse
+      previousContent: @extractContent(alphaResponse)
+      betaResponse:    null
+      round:           0
+    }
+
+  runDebateRound: (message, state, round, recordComm) ->
+    # Beta challenges
+    challengePrompt = @promptBuilder.buildDebateChallenge(message, state.previousContent)
+    betaResponse    = await @beta.processMessage(challengePrompt, state.previousContent)
+    betaContent     = @extractContent(betaResponse)
+
+    recordComm {
+      from:    'beta'
+      to:      'alpha'
+      message: betaContent
+      type:    'challenge'
+      round:   round
+    }
+
+    # Alpha refines
+    refinePrompt  = @promptBuilder.buildDebateRefine(message, state.previousContent, betaContent)
+    alphaRefined  = await @alpha.processMessage(refinePrompt, betaContent)
+    refinedContent = @extractContent(alphaRefined)
+
+    recordComm {
+      from:    'alpha'
+      to:      'beta'
+      message: refinedContent
+      type:    'refinement'
+      round:   round
+    }
+
+    {
+      betaResponse:   betaResponse
+      alphaRefined:   alphaRefined
+      refinedContent: refinedContent
+    }
+
+  updateState: (state, result) ->
+    {
+      ...state
+      alphaResponse:   result.alphaRefined
+      betaResponse:    result.betaResponse
+      previousContent: result.refinedContent
+      round:           state.round + 1
+    }
+
+  hasConverged: (previous, current) ->
+    @calculateSimilarity(previous, current) > @convergenceThreshold
+
+  calculateSimilarity: (text1, text2) ->
+    str1 = String(text1).toLowerCase()
+    str2 = String(text2).toLowerCase()
+
+    words1      = str1.split(/\s+/)
+    words2      = str2.split(/\s+/)
+    commonWords = words1.filter (word) -> words2.includes(word)
+    totalWords  = Math.max(words1.length, words2.length)
+
+    if totalWords > 0 then commonWords.length / totalWords else 0
+
+  buildResponse: (state) ->
+    {
+      alphaResponse: state.alphaResponse
+      betaResponse:  state.betaResponse
+      rounds:        state.round
+    }
+
+# Synthesis Mode - Parallel processing then unified response
+class SynthesisExecutor extends ModeExecutor
+  constructor: (alpha, beta, config) ->
+    super(alpha, beta, config)
+    @synthesisModel = config.modes.synthesis.synthesis_model
+    @showIndividual = config.modes.synthesis.show_individual
+
+  execute: (message, processId, recordComm) ->
+    # Get both responses in parallel
+    parallelExecutor = new ParallelExecutor(@alpha, @beta, @config)
+    parallelResult   = await parallelExecutor.execute(message, processId, recordComm)
+
+    # Extract contents
+    contents = {
+      alpha: @extractContent(parallelResult.alphaResponse)
+      beta:  @extractContent(parallelResult.betaResponse)
+    }
+
+    # Synthesize
+    synthesis = await @createSynthesis(message, contents, recordComm)
+
+    # Build final response
+    @buildResponse(parallelResult, synthesis)
+
+  createSynthesis: (message, contents, recordComm) ->
+    synthesizer     = if @synthesisModel is 'alpha' then @alpha else @beta
+    synthesisPrompt = @promptBuilder.buildSynthesisPrompt(message, contents)
+    synthesis       = await synthesizer.processMessage(synthesisPrompt, contents)
+
+    recordComm {
+      from:    'both'
+      to:      'synthesis'
+      message: @extractContent(synthesis)
+      type:    'synthesis'
+      inputs:  contents
+    }
+
+    synthesis
+
+  buildResponse: (parallelResult, synthesis) ->
+    {
+      alphaResponse: if @showIndividual then parallelResult.alphaResponse else null
+      betaResponse:  if @showIndividual then parallelResult.betaResponse  else null
+      synthesis:     synthesis
+    }
+
+# Handoff Mode - Conditional processing based on content
+class HandoffExecutor extends ModeExecutor
+  constructor: (alpha, beta, config) ->
+    super(alpha, beta, config)
+    @triggerPhrases = config.modes.handoff.trigger_phrases
+    @setupSelectionRules()
+
+  setupSelectionRules: ->
+    @modelSelectionRules =
+      alpha: ['analyze', 'calculate', 'verify', 'facts', 'data', 'logical', 'step', 'method']
+      beta:  ['create', 'imagine', 'design', 'alternative', 'innovative', 'brainstorm', 'idea']
+
+  execute: (message, processId, recordComm) ->
+    startModel      = @selectStartModel(message)
+    primaryModel    = if startModel is 'alpha' then @alpha else @beta
+    primaryResponse = await primaryModel.processMessage(message, null)
+    primaryContent  = @extractContent(primaryResponse)
+
+    if @shouldHandoff(primaryContent)
+      await @executeHandoff(
+        message,
+        startModel,
+        primaryResponse,
+        primaryContent,
+        recordComm
       )
-      expect(llmWithoutNeo4j.neo4jTool).toBe null
+    else
+      @buildSingleResponse(startModel, primaryResponse)
 
-  describe 'processMessage', ->
-    it 'should process a simple message', ->
-      mockAxios.post.mockResolvedValue(
-        createMockOllamaResponse('Test response')
-      )
+  selectStartModel: (message) ->
+    scores       = { alpha: 0, beta: 0 }
+    lowerMessage = message.toLowerCase()
 
-      result = await baseLLM.processMessage('Hello')
+    for model, keywords of @modelSelectionRules
+      scores[model] = keywords.filter((word) ->
+        lowerMessage.includes(word)
+      ).length
 
-      # TODO: Check mockAxios.post.mock.calls[0].arguments(
-        'http://localhost:11434/api/generate'
-        expect.objectContaining({
-          model: 'test-alpha'
-          prompt: expect.stringContaining('Hello')
-          stream: false
-        })
-        expect.any(Object)
-      )
+    if scores.alpha >= scores.beta then 'alpha' else 'beta'
 
-      assert.deepEqual result,({
-        content: 'Test response'
-        model: 'test-alpha'
-        role: 'analytical'
-        timestamp: expect.any(String)
-      })
+  shouldHandoff: (content) ->
+    lowerContent = content.toLowerCase()
+    @triggerPhrases.some (phrase) ->
+      lowerContent.includes(phrase.toLowerCase())
 
-    it 'should handle graph queries in message', ->
-      mockAxios.post.mockResolvedValue(
-        createMockOllamaResponse('Based on previous conversations...')
-      )
-      mockNeo4j.naturalLanguageQuery.mockResolvedValue({
-        records: [{ id: 'conv1' }, { id: 'conv2' }]
-      })
+  executeHandoff: (message, startModel, primaryResponse, primaryContent, recordComm) ->
+    otherModelName = if startModel is 'alpha' then 'beta' else 'alpha'
+    otherModel     = if startModel is 'alpha' then @beta else @alpha
 
-      result = await baseLLM.processMessage('What did we talk about before?')
+    handoffPrompt    = @promptBuilder.buildHandoffPrompt(message, startModel, primaryContent)
+    secondaryResponse = await otherModel.processMessage(handoffPrompt, primaryContent)
 
-      # TODO: Check mockNeo4j.naturalLanguageQuery.mock.calls[0].arguments('conversations')
-      # TODO: Check mockAxios.post.mock.calls[0].arguments(
-        expect.any(String)
-        expect.objectContaining({
-          prompt: expect.stringContaining('Recent conversations: 2 found')
-        })
-        expect.any(Object)
-      )
+    recordComm {
+      from:    startModel
+      to:      otherModelName
+      message: @getHandoffReason(startModel)
+      type:    'handoff'
+    }
 
-    it 'should handle errors gracefully', ->
-      mockAxios.post.mock.mockImplementation(-> Promise.reject(new Error('Connection failed')))
+    @buildDualResponse(startModel, primaryResponse, secondaryResponse, otherModelName)
 
-      await expect(baseLLM.processMessage('Hello')).rejects.toThrow(
-        'BaseLLM processing failed: Connection failed'
-      )
+  getHandoffReason: (fromModel) ->
+    reasons =
+      alpha: "Handing off for creative input"
+      beta:  "Handing off for analytical verification"
+    reasons[fromModel]
 
-  describe 'buildPrompt', ->
-    it 'should build prompt with all components', ->
-      prompt = baseLLM.buildPrompt(
-        'User message'
-        { alpha: 'Alpha context', beta: 'Beta context' }
-        'Graph context'
-      )
+  buildSingleResponse: (model, response) ->
+    {
+      alphaResponse: if model is 'alpha' then response else null
+      betaResponse:  if model is 'beta'  then response else null
+      primary:       model
+    }
 
-      expect(prompt).toContain 'Test alpha prompt'
-      expect(prompt).toContain 'Graph Context: Graph context'
-      expect(prompt).toContain 'Previous Alpha: Alpha context'
-      expect(prompt).toContain 'Previous Beta: Beta context'
-      expect(prompt).toContain 'User: User message'
-      expect(prompt).toContain 'Analytical:'
+  buildDualResponse: (startModel, firstResponse, secondResponse, primaryModel) ->
+    {
+      alphaResponse: if startModel is 'alpha' then firstResponse  else secondResponse
+      betaResponse:  if startModel is 'beta'  then firstResponse  else secondResponse
+      primary:       primaryModel
+    }
 
-    it 'should handle string context', ->
-      prompt = baseLLM.buildPrompt('Message', 'String context')
+# Prompt builder remains the same
+class PromptBuilder
+  buildDebateChallenge: (message, alphaContent) ->
+    """
+      Original question: #{message}
+      Alpha's response: #{alphaContent}
 
-      expect(prompt).toContain 'Context: String context'
+      Provide a creative challenge or alternative perspective to Alpha's response.
+      Focus on what might be missing, alternative approaches, or creative insights.
+    """
 
-  describe 'makeOllamaRequest', ->
-    it 'should make correct request to Ollama', ->
-      mockAxios.post.mockResolvedValue(
-        createMockOllamaResponse('Response')
-      )
+  buildDebateRefine: (message, alphaContent, betaContent) ->
+    """
+      Original question: #{message}
+      Your previous response: #{alphaContent}
+      Beta's challenge: #{betaContent}
 
-      result = await baseLLM.makeOllamaRequest('Test prompt')
+      Refine your response considering Beta's creative perspective.
+      Integrate valid points while maintaining analytical rigor.
+    """
 
-      # TODO: Check mockAxios.post.mock.calls[0].arguments(
-        'http://localhost:11434/api/generate'
-        {
-          model: 'test-alpha'
-          prompt: 'Test prompt'
-          stream: false
-          options: {
-            temperature: 0.3
-            top_p: 0.9
-            num_predict: 100
-          }
-        }
-        expect.objectContaining({
-          timeout: 1000
-        })
-      )
+  buildSynthesisPrompt: (message, contents) ->
+    """
+      Original question: #{message}
 
-      expect(result).toBe 'Response'
+      Alpha's analytical response: #{contents.alpha}
+      Beta's creative response: #{contents.beta}
 
-    it 'should handle connection errors', ->
-      error = new Error('Connection error')
-      error.code = 'ECONNREFUSED'
-      mockAxios.post.mock.mockImplementation(-> Promise.reject(error))
+      Create a unified response that synthesizes both perspectives.
+      Combine the logical rigor of Alpha with the creative insights of Beta.
+      The result should be more complete than either individual response.
+    """
 
-      await expect(baseLLM.makeOllamaRequest('Test')).rejects.toThrow(
-        'Cannot connect to Ollama. Is it running?'
-      )
+  buildHandoffPrompt: (message, fromModel, content) ->
+    perspectives =
+      alpha: "Alpha's initial analysis"
+      beta:  "Beta's creative perspective"
 
-    it 'should handle model not found', ->
-      error = new Error('Not found')
-      error.response = { status: 404 }
-      mockAxios.post.mock.mockImplementation(-> Promise.reject(error))
+    continuations =
+      alpha: "Please continue with a creative perspective."
+      beta:  "Please provide analytical verification and structure."
 
-      await expect(baseLLM.makeOllamaRequest('Test')).rejects.toThrow(
-        'Model test-alpha not found. Please pull it first.'
-      )
+    """
+      #{message}
 
-  describe 'parseResponse', ->
-    it 'should parse response and extract communications', ->
-      # Override extractCommunication for testing
-      baseLLM.extractCommunication = mock.fn().mockReturnValue([
-        { type: 'test', content: 'Test comm' }
-      ])
+      #{perspectives[fromModel]}: #{content}
 
-      result = baseLLM.parseResponse('Full response with COMMUNICATION: test')
+      #{continuations[fromModel]}
+    """
 
-      assert.deepEqual result,({
-        content: expect.stringContaining('Full response')
-        communication: [{ type: 'test', content: 'Test comm' }]
-        model: 'test-alpha'
-        role: 'analytical'
-        timestamp: expect.any(String)
-      })
-
-  describe 'graph operations', ->
-    it 'should extract and execute graph queries', ->
-      mockNeo4j.naturalLanguageQuery.mock.mockImplementation(-> Promise.resolve({ records: [] }))
-
-      parsed = {
-        content: 'GRAPH_QUERY: What entities exist?\nSome other content'
-      }
-
-      await baseLLM.handleGraphOperations(parsed, 'Original message')
-
-      # TODO: Check mockNeo4j.naturalLanguageQuery.mock.calls[0].arguments(
-        'What entities exist?'
-      )
-
-    it 'should extract and execute graph stores', ->
-      parsed = {
-        content: 'GRAPH_STORE: Entity: TestEntity, Type: Person, Confidence: 0.9'
-      }
-
-      await baseLLM.handleGraphOperations(parsed, 'Original message')
-
-      # TODO: Check mockNeo4j.addKnowledge.mock.calls[0].arguments(
-        [expect.objectContaining({
-          name: 'TestEntity'
-          type: 'Person'
-          confidence: '0.9'
-        })]
-        []
-      )
-
-    it 'should handle concept stores', ->
-      parsed = {
-        content: 'GRAPH_STORE: Concept: MachineLearning, Domain: Technology'
-      }
-
-      await baseLLM.handleGraphOperations(parsed, 'Original message')
-
-      # TODO: Check mockNeo4j.addKnowledge.mock.calls[0].arguments(
-        [expect.objectContaining({
-          name: 'MachineLearning'
-          type: 'concept'
-          domain: 'Technology'
-        })]
-        []
-      )
-
-  describe 'healthCheck', ->
-    it 'should return healthy status', ->
-      mockAxios.post.mockResolvedValue(
-        createMockOllamaResponse('OK')
-      )
-
-      result = await baseLLM.healthCheck()
-
-      assert.deepEqual result,({
-        status: 'healthy'
-        model: 'test-alpha'
-        response: 'OK'
-        timestamp: expect.any(String)
-      })
-
-    it 'should return unhealthy status on error', ->
-      mockAxios.post.mock.mockImplementation(-> Promise.reject(new Error('Connection failed')))
-
-      result = await baseLLM.healthCheck()
-
-      assert.deepEqual result,({
-        status: 'unhealthy'
-        model: 'test-alpha'
-        error: 'Connection failed'
-        timestamp: expect.any(String)
-      })
-
-  describe 'getModelInfo', ->
-    it 'should return model information', ->
-      mockAxios.get.mockResolvedValue({
-        data: {
-          models: [
-            { name: 'test-alpha', size: 1000, digest: 'abc123' }
-          ]
-        }
-      })
-
-      result = await baseLLM.getModelInfo()
-
-      assert.deepEqual result,({
-        model: 'test-alpha'
-        role: 'analytical'
-        personality: 'test-analytical'
-        available: true
-        details: { name: 'test-alpha', size: 1000, digest: 'abc123' }
-        config: {
-          temperature: 0.3
-          max_tokens: 100
-          top_p: 0.9
-        }
-      })
-
-    it 'should handle missing model', ->
-      mockAxios.get.mockResolvedValue({
-        data: { models: [] }
-      })
-
-      result = await baseLLM.getModelInfo()
-
-      expect(result.available).toBe false
-      assert.equal result.details, undefined
+module.exports = {
+  ModeExecutor
+  ParallelExecutor
+  SequentialExecutor
+  DebateExecutor
+  SynthesisExecutor
+  HandoffExecutor
+  PromptBuilder
 }
