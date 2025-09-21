@@ -1,29 +1,21 @@
-# Main Express application (ESM)
-express = require 'express'
-http = require 'http'
-{ Server } = require 'socket.io'
-path = require 'path'
-{ fileURLToPath } = require 'url'
+express           = require 'express'
+http              = require 'http'
+{ Server }        = require 'socket.io'
+path              = require 'path'
+
 require 'dotenv/config'
 
-# Import our services
 LLMAlpha       = require './services/llm-alpha'
 LLMBeta        = require './services/llm-beta'
 CorpusCallosum = require './services/corpus-callosum'
 Neo4jTool      = require './services/neo4j-tool'
 MessageRouter  = require './services/message-router'
 
-# Import configurations
 databaseConfig = require './config/database'
 ollamaConfig   = require './config/ollama'
 modelsConfig   = require './config/models'
 
-# Utility functions
 isoDateString  = -> new Date().toISOString()
-
-# ESM equivalent of __dirname
-__filename = fileURLToPath(import.meta.url)
-__dirname = path.dirname(__filename)
 
 class DualLLMApp
   constructor: ->
