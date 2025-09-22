@@ -5,7 +5,7 @@ class MessageRouter
     @messageHistory = []
     @interrupted = false
 
-  processMessage: (message, mode = 'parallel', conversationId = null) ->
+  processMessage: (message, mode = 'parallel', conversationId = null, options = {}) ->
     try
       # Generate conversation ID if not provided
       if not conversationId
@@ -16,7 +16,7 @@ class MessageRouter
         @initializeConversation(conversationId)
 
       conversation = @activeConversations.get(conversationId)
-      
+
       # Add user message to conversation
       userMessage = {
         id: @generateMessageId()
@@ -24,8 +24,9 @@ class MessageRouter
         sender: 'user'
         timestamp: new Date().toISOString()
         conversationId: conversationId
+        isOOC: options.isOOC || false  # Track if message is OOC
       }
-      
+
       conversation.messages.push(userMessage)
       @messageHistory.push(userMessage)
 
@@ -33,7 +34,7 @@ class MessageRouter
       await @storeMessageInNeo4j(userMessage, conversation)
 
       # Process through corpus callosum
-      result = await @corpusCallosum.orchestrate(message, conversationId, mode)
+      result = await @corpusCallosum.orchestrate(message, conversationId, mode, options)
 
       # Store AI responses in conversation and Neo4j
       if result.alphaResponse
@@ -77,6 +78,22 @@ class MessageRouter
         conversation.messages.push(synthesisMessage)
         @messageHistory.push(synthesisMessage)
         await @storeMessageInNeo4j(synthesisMessage, conversation)
+
+      # Handle roleplay IC responses
+      if result.icResponse
+        icMessage = {
+          id: @generateMessageId()
+          content: result.icResponse
+          sender: 'character'
+          character: result.character
+          model: 'roleplay'
+          timestamp: result.timestamp
+          conversationId: conversationId
+          isOOC: false
+        }
+        conversation.messages.push(icMessage)
+        @messageHistory.push(icMessage)
+        await @storeMessageInNeo4j(icMessage, conversation)
 
       # Update conversation metadata
       conversation.lastActivity = new Date().toISOString()
@@ -351,5 +368,14 @@ class MessageRouter
       interrupted: @interrupted
       corpusStats: @corpusCallosum.getStats()
     }
+
+  # Character management methods for roleplay
+  loadCharacter: (characterCard) ->
+    # Returns character info including first message
+    @corpusCallosum.loadCharacter(characterCard)
+
+  resetRoleplay: ->
+    # Returns the first message if available
+    @corpusCallosum.resetRoleplay()
 
 module.exports = MessageRouter

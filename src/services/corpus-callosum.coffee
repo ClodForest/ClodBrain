@@ -5,6 +5,7 @@
   DebateExecutor
   SynthesisExecutor
   HandoffExecutor
+  RolePlayExecutor
 } = require './mode-executors'
 
 class CorpusCallosum
@@ -25,6 +26,7 @@ class CorpusCallosum
       debate:     new DebateExecutor(@alpha, @beta, @config)
       synthesis:  new SynthesisExecutor(@alpha, @beta, @config)
       handoff:    new HandoffExecutor(@alpha, @beta, @config)
+      roleplay:   new RolePlayExecutor(@alpha, @beta, @config)
 
   initializeClassifiers: ->
     @messageClassifiers = [
@@ -35,7 +37,7 @@ class CorpusCallosum
     ]
 
   # Main orchestration method
-  orchestrate: (userMessage, conversationId, mode = null) ->
+  orchestrate: (userMessage, conversationId, mode = null, options = {}) ->
     activeMode = mode || @currentMode
     processId  = @generateProcessId()
 
@@ -49,9 +51,15 @@ class CorpusCallosum
       # Create communication recorder for this process
       recordComm = (communication) => @recordCommunication(processId, communication)
 
-      # Execute the mode
-      console.log "Running #{activeMode} mode for: #{userMessage}"
-      result = await executor.execute(userMessage, processId, recordComm, @modeParameters)
+      # Handle role-play specific options
+      if activeMode is 'roleplay'
+        # Pass isOOC flag if provided
+        console.log "Running roleplay mode (#{if options.isOOC then 'OOC' else 'IC'}): #{userMessage}"
+        result = await executor.execute(userMessage, processId, recordComm, options.isOOC)
+      else
+        # Execute the mode normally
+        console.log "Running #{activeMode} mode for: #{userMessage}"
+        result = await executor.execute(userMessage, processId, recordComm, @modeParameters)
 
       # Finalize result
       result = @finalizeResult(result, activeMode, processId)
@@ -131,6 +139,30 @@ class CorpusCallosum
     @currentMode    = mode
     @modeParameters = parameters
     console.log "Corpus Callosum mode changed to: #{mode}"
+
+  # Character management for roleplay mode
+  loadCharacter: (characterCard) ->
+    roleplayExecutor = @executors.roleplay
+    unless roleplayExecutor
+      throw new Error "Roleplay executor not initialized"
+
+    roleplayExecutor.setCharacter(characterCard)
+    @currentMode = 'roleplay'
+    console.log "Character loaded for roleplay mode"
+
+    # Return character info including first message
+    {
+      name: characterCard.name
+      scenario: characterCard.scenario
+      first_mes: characterCard.first_mes
+    }
+
+  resetRoleplay: ->
+    roleplayExecutor = @executors.roleplay
+    if roleplayExecutor
+      firstMessage = roleplayExecutor.resetConversation()
+      console.log "Roleplay conversation reset"
+      firstMessage
 
   # Utilities
   generateProcessId: ->

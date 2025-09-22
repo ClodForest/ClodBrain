@@ -366,6 +366,225 @@ class PromptBuilder
       #{continuations[fromModel]}
     """
 
+# RolePlay Mode - Character-based collaborative storytelling
+class RolePlayExecutor extends ModeExecutor
+  constructor: (alpha, beta, config) ->
+    super(alpha, beta, config)
+    @character = null
+    @scenario = null
+    @worldInfo = null
+    @messageHistory = []
+    @maxContextMessages = 20
+
+  setCharacter: (characterCard) ->
+    @character = @parseCharacterCard(characterCard)
+    @scenario = characterCard.scenario || null
+    @worldInfo = characterCard.world_info || null
+    @messageHistory = []
+
+    # Add first greeting to message history if available
+    if @character.first_mes
+      @messageHistory.push { role: 'assistant', content: @character.first_mes, isOOC: false }
+
+    console.log "Character loaded: #{@character.name}"
+
+  parseCharacterCard: (card) ->
+    # Support SillyTavern character card format
+    {
+      name: card.name || 'Character'
+      description: card.description || ''
+      personality: card.personality || ''
+      first_mes: card.first_mes || ''
+      mes_example: card.mes_example || ''
+      scenario: card.scenario || ''
+      creator_notes: card.creator_notes || ''
+      system_prompt: card.system_prompt || ''
+      alternate_greetings: card.alternate_greetings || []
+      tags: card.tags || []
+    }
+
+  execute: (message, processId, recordComm, isOOC = false) ->
+    unless @character
+      throw new Error "No character loaded. Please load a character card first."
+
+    # Store the user message in history
+    @messageHistory.push { role: 'user', content: message, isOOC }
+
+    if isOOC
+      # Handle OOC messages - brains discuss the character/scene
+      @handleOOCMessage(message, processId, recordComm)
+    else
+      # Handle IC messages - generate in-character response
+      @handleICMessage(message, processId, recordComm)
+
+  handleICMessage: (message, processId, recordComm) ->
+    # Build context for both brains
+    context = @buildCharacterContext()
+
+    # Alpha analyzes character consistency and scene logic
+    alphaPrompt = """
+      #{context}
+
+      As the analytical brain, analyze the current scene and ensure character consistency.
+      Consider: personality traits, established relationships, scene continuity.
+      User says: "#{message}"
+
+      Provide brief OOC notes about how #{@character.name} should respond.
+    """
+
+    # Beta generates creative character response
+    betaPrompt = """
+      #{context}
+
+      As the creative brain, embody #{@character.name} and respond naturally.
+      Stay true to their voice, mannerisms, and emotional state.
+      User says: "#{message}"
+
+      Respond as #{@character.name} would, in character.
+    """
+
+    # Get both responses in parallel
+    promises = [
+      @alpha.processMessage(alphaPrompt, null)
+      @beta.processMessage(betaPrompt, null)
+    ]
+
+    results = await Promise.allSettled(promises)
+    [alphaResult, betaResult] = results
+
+    # Extract responses
+    alphaContent = if alphaResult.status is 'fulfilled'
+      @extractContent(alphaResult.value)
+    else
+      null
+
+    betaContent = if betaResult.status is 'fulfilled'
+      @extractContent(betaResult.value)
+    else
+      null
+
+    # Record Alpha's analysis as OOC communication
+    if alphaContent
+      recordComm {
+        from: 'alpha'
+        to: 'ooc'
+        message: alphaContent
+        type: 'character_analysis'
+      }
+
+    # Beta refines response based on Alpha's analysis
+    if alphaContent and betaContent
+      refinementPrompt = """
+        #{context}
+
+        Alpha's consistency notes: #{alphaContent}
+        Your initial response: #{betaContent}
+
+        Refine your response as #{@character.name}, incorporating Alpha's insights while maintaining the character's authentic voice.
+      """
+
+      refinedResponse = await @beta.processMessage(refinementPrompt, alphaContent)
+      finalICResponse = @extractContent(refinedResponse)
+
+      recordComm {
+        from: 'beta'
+        to: 'alpha'
+        message: 'Refined character response based on consistency analysis'
+        type: 'refinement'
+      }
+    else
+      finalICResponse = betaContent
+
+    # Store the character's response in history
+    @messageHistory.push { role: 'assistant', content: finalICResponse, isOOC: false }
+
+    # Trim history if too long
+    if @messageHistory.length > @maxContextMessages * 2
+      @messageHistory = @messageHistory.slice(-@maxContextMessages * 2)
+
+    {
+      alphaResponse: alphaContent  # OOC analysis
+      betaResponse: betaContent    # Initial IC response
+      icResponse: finalICResponse  # Final IC response
+      character: @character.name
+      isOOC: false
+    }
+
+  handleOOCMessage: (message, processId, recordComm) ->
+    # Both brains discuss the scene/character out of character
+    oocPrompt = """
+      Character: #{@character.name}
+      Description: #{@character.description}
+      Current scenario: #{@scenario || 'Not specified'}
+
+      OOC Discussion requested: #{message}
+
+      Provide your perspective on the character, scene, or story development.
+    """
+
+    promises = [
+      @alpha.processMessage(oocPrompt + "\nAs Alpha, provide analytical insights about story structure, consistency, and character development.", null)
+      @beta.processMessage(oocPrompt + "\nAs Beta, provide creative ideas about potential plot twists, emotional depth, and character growth.", null)
+    ]
+
+    results = await Promise.allSettled(promises)
+    [alphaResult, betaResult] = results
+
+    alphaContent = if alphaResult.status is 'fulfilled'
+      @extractContent(alphaResult.value)
+    else
+      'Alpha encountered an error'
+
+    betaContent = if betaResult.status is 'fulfilled'
+      @extractContent(betaResult.value)
+    else
+      'Beta encountered an error'
+
+    recordComm {
+      from: 'both'
+      to: 'ooc'
+      message: 'Out-of-character discussion'
+      type: 'ooc_discussion'
+    }
+
+    {
+      alphaResponse: alphaContent
+      betaResponse: betaContent
+      icResponse: null
+      character: @character?.name
+      isOOC: true
+    }
+
+  buildCharacterContext: ->
+    return '' unless @character
+
+    # Build character context including recent history
+    characterName = @character.name
+    recentHistory = @messageHistory
+      .slice(-@maxContextMessages)
+      .map((msg) ->
+        role = if msg.role is 'user' then 'User' else characterName
+        "#{role}: #{msg.content}"
+      )
+      .join('\n')
+
+    """
+      Character: #{@character.name}
+      Description: #{@character.description}
+      Personality: #{@character.personality}
+      #{if @scenario then "Scenario: #{@scenario}" else ''}
+      #{if @character.system_prompt then "System: #{@character.system_prompt}" else ''}
+
+      #{if recentHistory then "Recent conversation:\n#{recentHistory}" else ''}
+    """
+
+  resetConversation: ->
+    @messageHistory = []
+    if @character?.first_mes
+      @messageHistory.push { role: 'assistant', content: @character.first_mes, isOOC: false }
+    # Return the first message for display
+    @character?.first_mes
+
 module.exports = {
   ModeExecutor
   ParallelExecutor
@@ -373,5 +592,6 @@ module.exports = {
   DebateExecutor
   SynthesisExecutor
   HandoffExecutor
+  RolePlayExecutor
   PromptBuilder
 }

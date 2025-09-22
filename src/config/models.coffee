@@ -1,7 +1,7 @@
 # Model configuration for Alpha and Beta LLMs (ESM)
 module.exports = {
   alpha:
-    model: process.env.ALPHA_MODEL || 'llama3.1:8b-instruct-q4_K_M'
+    model: process.env.ALPHA_MODEL || 'phi4-reasoning:plus'
     role: 'analytical'
     personality: 'precise and methodical'
     system_prompt: '''
@@ -24,12 +24,12 @@ module.exports = {
 
       Always maintain your analytical nature while being collaborative.
     '''
-    temperature: 0.3
-    max_tokens: 2048
-    top_p: 0.9
+    temperature: 0.8
+    max_tokens: 4096
+    top_p: 0.95
 
   beta:
-    model: process.env.BETA_MODEL || 'qwen2.5-coder:7b-instruct-q4_K_M'
+    model: process.env.BETA_MODEL || 'gpt-oss'
     role: 'creative'
     personality: 'intuitive and creative'
     system_prompt: '''
@@ -52,8 +52,8 @@ module.exports = {
 
       Always maintain your creative nature while being collaborative.
     '''
-    temperature: 0.7
-    max_tokens: 2048
+    temperature: 1.0
+    max_tokens: 4096
     top_p: 0.95
 
   corpus_callosum:
@@ -90,10 +90,10 @@ module.exports = {
 
     # Inter-model communication patterns
     communication_patterns:
-      request_input: 'REQUEST_INPUT: {topic}'
-      share_analysis: 'ANALYSIS: {findings}'
-      suggest_alternative: 'ALTERNATIVE: {suggestion}'
+      request_input:        'REQUEST_INPUT: {topic}'
+      share_analysis:       'ANALYSIS: {findings}'
+      suggest_alternative:  'ALTERNATIVE: {suggestion}'
       challenge_assumption: 'CHALLENGE: {assumption}'
-      provide_context: 'CONTEXT: {information}'
-      synthesize: 'SYNTHESIZE: {combination_request}'
+      provide_context:      'CONTEXT: {information}'
+      synthesize:           'SYNTHESIZE: {combination_request}'
 }

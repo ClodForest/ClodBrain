@@ -147,15 +147,20 @@ class DualLLMApp
       socket.on 'orchestration_change', (data) => @handleOrchestrationChange socket, data
       socket.on 'neo4j_query',          (data) => @handleNeo4jQuery          socket, data
       socket.on 'model_interrupt',      (data) => @handleModelInterrupt      socket, data
+      socket.on 'load_character',       (data) => @handleLoadCharacter       socket, data
+      socket.on 'reset_roleplay',       (data) => @handleResetRoleplay       socket, data
       socket.on 'disconnect',                  -> console.log 'User disconnected:', socket.id
 
   handleUserMessage: (socket, data) ->
     try
-      { message, mode = 'parallel', conversationId } = data
+      { message, mode = 'parallel', conversationId, isOOC } = data
 
-      console.log "Processing message: #{message} in mode: #{mode}"
+      console.log "Processing message: #{message} in mode: #{mode}#{if isOOC then ' (OOC)' else ''}"
 
-      result = await @messageRouter.processMessage(message, mode, conversationId)
+      options = {}
+      options.isOOC = isOOC if mode is 'roleplay'
+
+      result = await @messageRouter.processMessage(message, mode, conversationId, options)
 
       console.log "Result from message router:", {
         hasAlpha:     !!result.alphaResponse
@@ -204,6 +209,16 @@ class DualLLMApp
           mode:      mode
         }
 
+      # Emit IC response for roleplay mode
+      if result.icResponse
+        console.log "Sending IC response from #{result.character}: #{result.icResponse?.substring(0, 100)}..."
+        socket.emit 'ic_response', {
+          content:   result.icResponse
+          character: result.character
+          timestamp: isoDateString()
+          isOOC:     result.isOOC
+        }
+
       # Emit corpus callosum communications
       if result.communications
         for comm in result.communications
@@ -244,6 +259,24 @@ class DualLLMApp
       socket.emit 'models_interrupted'
     catch error
       console.error 'Error interrupting models:', error
+      socket.emit 'error', { message: error.message }
+
+  handleLoadCharacter: (socket, characterCard) ->
+    try
+      characterInfo = @messageRouter.loadCharacter(characterCard)
+      socket.emit 'character_loaded', characterInfo
+      console.log "Character loaded: #{characterInfo.name}"
+    catch error
+      console.error 'Error loading character:', error
+      socket.emit 'error', { message: error.message }
+
+  handleResetRoleplay: (socket, data) ->
+    try
+      firstMessage = @messageRouter.resetRoleplay()
+      socket.emit 'roleplay_reset', { first_mes: firstMessage }
+      console.log "Roleplay conversation reset"
+    catch error
+      console.error 'Error resetting roleplay:', error
       socket.emit 'error', { message: error.message }
 
   extractContent: (response) ->
